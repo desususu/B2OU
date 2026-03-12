@@ -83,6 +83,9 @@ def copy_and_open(db_path: Path) -> tuple[sqlite3.Connection, Optional[Path]]:
     tmp = None
     try:
         fd, tmp = tempfile.mkstemp(suffix=".sqlite", prefix="b2ou_export_")
+        # Ensure restrictive permissions (owner-only read/write) for the
+        # snapshot which contains the full Bear database contents.
+        os.fchmod(fd, 0o600)
         os.close(fd)
 
         src = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -112,7 +115,14 @@ def copy_and_open(db_path: Path) -> tuple[sqlite3.Connection, Optional[Path]]:
 # ---------------------------------------------------------------------------
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    """Check whether *table* has a column named *column*."""
+    """Check whether *table* has a column named *column*.
+
+    Only allow known table names to prevent SQL injection via the table
+    parameter (PRAGMA does not support parameter binding for identifiers).
+    """
+    _ALLOWED_TABLES = frozenset({"ZSFNOTE", "ZSFNOTEFILE", "ZSFNOTETAG"})
+    if table not in _ALLOWED_TABLES:
+        return False
     try:
         info = conn.execute(f"PRAGMA table_info({table})").fetchall()
         return any(row["name"] == column for row in info)

@@ -110,6 +110,11 @@ def _pick_folder(prompt: str = "Choose where to save your Bear notes:") -> Optio
     return None
 
 
+def _toml_escape(value: str) -> str:
+    """Escape a string value for safe inclusion in a TOML basic string."""
+    return value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+
+
 def _write_config(export_path: str, export_format: str = "md",
                   export_path_tb: Optional[str] = None,
                   yaml_front_matter: bool = False,
@@ -129,13 +134,13 @@ def _write_config(export_path: str, export_format: str = "md",
         "# After editing, use Profile > Reload in the menu bar.",
         "",
         "[profile.default]",
-        f'out = "{export_path}"',
-        f'format = "{export_format}"',
-        f'on-delete = "{on_delete}"',
-        f'naming = "{naming}"',
+        f'out = "{_toml_escape(export_path)}"',
+        f'format = "{_toml_escape(export_format)}"',
+        f'on-delete = "{_toml_escape(on_delete)}"',
+        f'naming = "{_toml_escape(naming)}"',
     ]
     if export_format == "both" and export_path_tb:
-        lines.append(f'out-tb = "{export_path_tb}"')
+        lines.append(f'out-tb = "{_toml_escape(export_path_tb)}"')
 
     if yaml_front_matter:
         lines.append("yaml-front-matter = true")
@@ -144,7 +149,7 @@ def _write_config(export_path: str, export_format: str = "md",
     if tag_folders:
         lines.append("tag-folders = true")
     if exclude_tags:
-        tags_str = ", ".join(f'"{tag}"' for tag in exclude_tags)
+        tags_str = ", ".join(f'"{_toml_escape(tag)}"' for tag in exclude_tags)
         lines.append(f"exclude-tags = [{tags_str}]")
 
     lines.append("")
@@ -242,43 +247,43 @@ class ExportWatcher:
 
             time.sleep(POLL_INTERVAL)
 
-        def _do_export(self):
-            from b2ou.export import (
-                cleanup_orphan_root_images,
-                cleanup_stale_notes,
-                export_notes,
-                maintenance_due,
-                purge_old_trash,
-                touch_maintenance,
-                write_timestamps,
-            )
+    def _do_export(self):
+        from b2ou.export import (
+            cleanup_orphan_root_images,
+            cleanup_stale_notes,
+            export_notes,
+            maintenance_due,
+            purge_old_trash,
+            touch_maintenance,
+            write_timestamps,
+        )
 
-            error_msg = None
-            try:
-                configs = self.cfg.split_export_configs()
-                total_count = 0
-                for cfg in configs:
-                    cfg.export_path.mkdir(parents=True, exist_ok=True)
-                    count, expected, changed = export_notes(cfg)
-                    if changed < 0:
-                        log.info("Export already running for %s — skipping.",
-                                 cfg.export_path)
-                        continue
-                    write_timestamps(cfg)
-                    if changed > 0:
-                        cleanup_stale_notes(
-                            cfg.export_path, expected, cfg.on_delete
-                        )
-                        if maintenance_due(cfg.export_path):
-                            if cfg.export_image_repository:
-                                cleanup_orphan_root_images(cfg)
-                            purge_old_trash(cfg.export_path)
-                            touch_maintenance(cfg.export_path)
-                    total_count = max(total_count, count)
-                self._note_count = total_count
-                self._last_export_time = datetime.datetime.now()
-                self._consecutive_failures = 0
-            except Exception as exc:
+        error_msg = None
+        try:
+            configs = self.cfg.split_export_configs()
+            total_count = 0
+            for cfg in configs:
+                cfg.export_path.mkdir(parents=True, exist_ok=True)
+                count, expected, changed = export_notes(cfg)
+                if changed < 0:
+                    log.info("Export already running for %s — skipping.",
+                             cfg.export_path)
+                    continue
+                write_timestamps(cfg)
+                if changed > 0:
+                    cleanup_stale_notes(
+                        cfg.export_path, expected, cfg.on_delete
+                    )
+                    if maintenance_due(cfg.export_path):
+                        if cfg.export_image_repository:
+                            cleanup_orphan_root_images(cfg)
+                        purge_old_trash(cfg.export_path)
+                        touch_maintenance(cfg.export_path)
+                total_count = max(total_count, count)
+            self._note_count = total_count
+            self._last_export_time = datetime.datetime.now()
+            self._consecutive_failures = 0
+        except Exception as exc:
             self._consecutive_failures += 1
             error_msg = str(exc)
             log.error("Export failed (%d consecutive): %s",

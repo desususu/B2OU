@@ -7,8 +7,8 @@ app starts automatically at login.
 
 from __future__ import annotations
 
-import os
 import plistlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -60,7 +60,10 @@ def add_login_item() -> bool:
             plistlib.dump(plist_data, f)
 
         # Load immediately so it takes effect
-        os.system(f"launchctl load -w '{PLIST_PATH}' 2>/dev/null")
+        subprocess.run(
+            ["launchctl", "load", "-w", str(PLIST_PATH)],
+            capture_output=True, check=False,
+        )
         return True
     except Exception:
         return False
@@ -70,7 +73,10 @@ def remove_login_item() -> bool:
     """Remove the LaunchAgent plist. Returns True on success."""
     try:
         if PLIST_PATH.exists():
-            os.system(f"launchctl unload '{PLIST_PATH}' 2>/dev/null")
+            subprocess.run(
+                ["launchctl", "unload", str(PLIST_PATH)],
+                capture_output=True, check=False,
+            )
             PLIST_PATH.unlink()
         return True
     except Exception:
