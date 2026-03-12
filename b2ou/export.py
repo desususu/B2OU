@@ -99,18 +99,25 @@ def _read_manifest(export_path: Path) -> set[str]:
 
 
 def _write_manifest(export_path: Path, paths: set[Path]) -> None:
-    """Write the manifest file with relative paths of all exported files."""
+    """Write the manifest file atomically with relative paths of all exported files."""
     manifest = export_path / MANIFEST_NAME
     lines = sorted(
         str(p.relative_to(export_path))
         for p in paths
         if p != manifest
     )
+    content = "\n".join(lines) + "\n" if lines else ""
+    tmp = manifest.with_name(f".{MANIFEST_NAME}.tmp")
     try:
-        manifest.write_text("\n".join(lines) + "\n" if lines else "",
-                            encoding="utf-8")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, manifest)
     except OSError as exc:
         log.warning("Could not write manifest: %s", exc)
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -144,12 +151,28 @@ def generate_front_matter(note: BearNote, text: str) -> str:
 
 
 def _yaml_escape(value: str) -> str:
-    """Escape a YAML value if it contains special characters."""
+    """Escape a YAML value if it contains special characters.
+
+    Always quotes values containing newlines, colons, or other YAML-special
+    characters.  Uses YAML double-quote escaping (``""`` doubles quotes,
+    ``\\n`` escapes newlines) to prevent injection of arbitrary YAML keys.
+    """
     if not value:
         return '""'
-    # Quote if it contains characters that might break YAML parsing
-    if any(c in value for c in ':{}[]&*?|>!%@`,"\'#'):
-        escaped = value.replace('"', '\\"')
+    # Always quote if it contains newlines (prevents YAML key injection),
+    # special YAML characters, or leading/trailing whitespace.
+    needs_quoting = (
+        '\n' in value
+        or '\r' in value
+        or any(c in value for c in ':{}[]&*?|>!%@`,"\'#')
+        or value != value.strip()
+        or value.startswith(('-', '?', ':', '!'))
+    )
+    if needs_quoting:
+        # YAML double-quoted scalar: backslash and double-quote must be escaped
+        escaped = value.replace('\\', '\\\\').replace('"', '\\"')
+        escaped = escaped.replace('\n', '\\n').replace('\r', '\\r')
+        escaped = escaped.replace('\t', '\\t')
         return f'"{escaped}"'
     return value
 
