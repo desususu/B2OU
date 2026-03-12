@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "b2ou"
+version = "5.0.0"
+description = "Bear to Obsidian / Ulysses export tool"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "rovest" },
+    { name = "andymatuschak" },
+]
+keywords = ["bear", "obsidian", "ulysses", "export", "markdown", "macos"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: MacOS X",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Utilities",
+]
+
+# Core dependencies (macOS only)
+dependencies = [
+    "pyobjc-framework-Cocoa>=10.0",
+]
+
+[project.optional-dependencies]
+gui       = ["rumps>=0.4.0", "pyinstaller>=6.0"]
+test      = ["pytest>=7.0"]
+all       = ["rumps>=0.4.0", "pyinstaller>=6.0", "pytest>=7.0"]
+
+[project.scripts]
+b2ou = "b2ou.cli:main"
+
+[project.gui-scripts]
+b2ou-gui = "b2ou.menubar:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["b2ou*"]
+
+# ---------------------------------------------------------------------------
+# Ruff (linting + formatting)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 95
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+# ---------------------------------------------------------------------------
+# Mypy (type checking)
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.10"
+strict = false
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

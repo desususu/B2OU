@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- Shield body gradient (light grey) -->
+    <linearGradient id="shieldFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8E8EC"/>
+      <stop offset="100%" stop-color="#C8C8D0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- === Outer dark border / shadow of the shield === -->
+  <path d="
+    M 512 90
+    C 390 90, 310 140, 270 190
+    C 230 130, 180 110, 160 110
+    C 100 110, 60 160, 60 220
+    C 60 290, 100 340, 170 340
+    C 200 340, 230 325, 250 305
+    C 240 370, 200 440, 140 440
+    C 80 440, 80 520, 130 560
+    C 130 560, 120 600, 120 640
+    C 120 800, 300 940, 512 980
+    C 724 940, 904 800, 904 640
+    C 904 600, 894 560, 894 560
+    C 944 520, 944 440, 884 440
+    C 824 440, 784 370, 774 305
+    C 794 325, 824 340, 854 340
+    C 924 340, 964 290, 964 220
+    C 964 160, 924 110, 864 110
+    C 844 110, 794 130, 754 190
+    C 714 140, 634 90, 512 90
+    Z"
+    fill="#5C6370" />
+
+  <!-- === White border trim === -->
+  <path d="
+    M 512 120
+    C 400 120, 325 165, 288 210
+    C 250 155, 205 135, 175 135
+    C 120 135, 85 180, 85 235
+    C 85 298, 120 340, 185 340
+    C 210 340, 235 328, 260 310
+    C 248 385, 215 450, 160 455
+    C 110 460, 105 530, 148 565
+    C 150 567, 147 600, 147 640
+    C 147 785, 315 915, 512 955
+    C 709 915, 877 785, 877 640
+    C 877 600, 874 567, 876 565
+    C 919 530, 914 460, 864 455
+    C 809 450, 776 385, 764 310
+    C 789 328, 814 340, 839 340
+    C 904 340, 939 298, 939 235
+    C 939 180, 904 135, 849 135
+    C 819 135, 774 155, 736 210
+    C 699 165, 624 120, 512 120
+    Z"
+    fill="#FFFFFF" />
+
+  <!-- === Shield body (light grey) === -->
+  <path d="
+    M 512 150
+    C 410 150, 340 190, 305 230
+    C 270 180, 225 160, 195 160
+    C 148 160, 115 200, 115 248
+    C 115 305, 145 340, 200 340
+    C 225 340, 248 325, 272 305
+    C 258 395, 230 460, 178 468
+    C 135 475, 132 535, 167 565
+    C 172 570, 172 605, 172 640
+    C 172 772, 328 893, 512 930
+    C 696 893, 852 772, 852 640
+    C 852 605, 852 570, 857 565
+    C 892 535, 889 475, 846 468
+    C 794 460, 766 395, 752 305
+    C 776 325, 799 340, 824 340
+    C 879 340, 909 305, 909 248
+    C 909 200, 876 160, 829 160
+    C 799 160, 754 180, 719 230
+    C 684 190, 614 150, 512 150
+    Z"
+    fill="url(#shieldFill)" />
+
+  <!-- === Bear head (white, overlapping shield top) === -->
+  <!-- Left ear -->
+  <circle cx="365" cy="240" r="100" fill="#FFFFFF"/>
+  <circle cx="365" cy="240" r="55" fill="#5C6370" opacity="0.25"/>
+
+  <!-- Right ear -->
+  <circle cx="659" cy="240" r="100" fill="#FFFFFF"/>
+  <circle cx="659" cy="240" r="55" fill="#5C6370" opacity="0.25"/>
+
+  <!-- Head -->
+  <ellipse cx="512" cy="370" rx="210" ry="190" fill="#FFFFFF"/>
+
+  <!-- Left eye -->
+  <circle cx="440" cy="340" r="28" fill="#5C6370"/>
+
+  <!-- Right eye -->
+  <circle cx="584" cy="340" r="28" fill="#5C6370"/>
+
+  <!-- Nose -->
+  <ellipse cx="512" cy="410" rx="30" ry="22" fill="#5C6370"/>
+
+  <!-- Mouth (smile) -->
+  <path d="M 488 430 Q 512 458 536 430"
+        stroke="#5C6370" stroke-width="6" fill="none" stroke-linecap="round"/>
+
+  <!-- === Sync/refresh arrows (on the shield body) === -->
+  <g transform="translate(512, 700)">
+    <!-- Right-pointing curved arrow (top) -->
+    <path d="M -8 -50 A 50 50 0 0 1 50 -8"
+          stroke="#5C6370" stroke-width="18" fill="none" stroke-linecap="round"/>
+    <polygon points="50,8 50,-30 72,-8" fill="#5C6370"/>
+
+    <!-- Left-pointing curved arrow (bottom) -->
+    <path d="M 8 50 A 50 50 0 0 1 -50 8"
+          stroke="#5C6370" stroke-width="18" fill="none" stroke-linecap="round"/>
+    <polygon points="-50,-8 -50,30 -72,8" fill="#5C6370"/>
+  </g>
+</svg>
