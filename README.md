@@ -6,6 +6,8 @@
 
 Bear → Obsidian / Ulysses export tool for macOS.
 
+Latest release: [v6.0.0](https://github.com/desususu/B2OU/releases/tag/v6.0.0) · Download: [B2OU.app.zip](https://github.com/desususu/B2OU/releases/download/v6.0.0/B2OU.app.zip)
+
 ---
 
 ## Backup Required Before First Use (Important)
