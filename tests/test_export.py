@@ -107,6 +107,16 @@ def test_generate_filename_empty_title_slug():
     note = _note(title="")
     assert generate_filename(note, "slug") == "untitled"
 
+def test_is_untitled_placeholder():
+    from b2ou.export import _is_untitled_placeholder
+
+    assert _is_untitled_placeholder(_note(title="", text=""))
+    assert _is_untitled_placeholder(_note(title="", text="#"))
+    assert _is_untitled_placeholder(_note(title="", text="  #  "))
+    assert _is_untitled_placeholder(_note(title="", text="##\n#\n"))
+    assert not _is_untitled_placeholder(_note(title="Untitled", text="#"))
+    assert not _is_untitled_placeholder(_note(title="", text="#tag"))
+
 
 # ---------------------------------------------------------------------------
 # write_note_file

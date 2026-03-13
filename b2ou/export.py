@@ -86,6 +86,16 @@ _RE_NON_ALNUM = __import__("re").compile(r'[^a-z0-9]+')
 MANIFEST_NAME = ".b2ou-manifest"
 
 
+def _is_untitled_placeholder(note: BearNote) -> bool:
+    """True if the note looks like an empty placeholder with no real title."""
+    if note.title.strip():
+        return False
+    text = note.text.strip()
+    if not text:
+        return True
+    return all(ch in "# \t\r\n" for ch in text)
+
+
 def _read_manifest(export_path: Path) -> set[str]:
     """Read the manifest file and return the set of relative paths."""
     manifest = export_path / MANIFEST_NAME
@@ -621,6 +631,12 @@ def export_notes(config: ExportConfig) -> tuple[int, set[Path], int]:
         config.export_path.mkdir(parents=True, exist_ok=True)
 
         for note in iter_notes(conn):
+            if _is_untitled_placeholder(note):
+                log.debug(
+                    "Skipping placeholder note with empty title: %s",
+                    note.uuid,
+                )
+                continue
             filename = generate_filename(note, config.naming)
             mod_unix = core_data_to_unix(note.modified_date)
 
