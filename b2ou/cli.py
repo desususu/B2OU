@@ -75,6 +75,7 @@ def _write_status(status_file: Optional[Path], state: str, *,
 def _run_export(cfg, log) -> int:
     """Run a single incremental export cycle. Returns note count."""
     from b2ou.export import (
+        _write_manifest,
         cleanup_orphan_root_images,
         cleanup_stale_notes,
         export_notes,
@@ -99,6 +100,8 @@ def _run_export(cfg, log) -> int:
 
         # Skip expensive cleanup walks when nothing actually changed
         if changed > 0:
+            # Run cleanup BEFORE updating the manifest so it can still
+            # see old filenames (e.g. from a renamed note) and remove them.
             removed = cleanup_stale_notes(sub.export_path, expected, sub.on_delete)
             if removed:
                 log.info("Cleaned %d stale files from export folder.", removed)
@@ -114,6 +117,11 @@ def _run_export(cfg, log) -> int:
                     log.info("Purged %d old trash folders.", purged)
 
                 touch_maintenance(sub.export_path)
+
+        # Update manifest after cleanup so that the old manifest was
+        # available during cleanup to identify previously-exported files.
+        if expected:
+            _write_manifest(sub.export_path, expected)
 
         total_count = max(total_count, note_count)
         total_changed += changed

@@ -249,6 +249,7 @@ class ExportWatcher:
 
     def _do_export(self):
         from b2ou.export import (
+            _write_manifest,
             cleanup_orphan_root_images,
             cleanup_stale_notes,
             export_notes,
@@ -279,6 +280,8 @@ class ExportWatcher:
                             cleanup_orphan_root_images(cfg)
                         purge_old_trash(cfg.export_path)
                         touch_maintenance(cfg.export_path)
+                if expected:
+                    _write_manifest(cfg.export_path, expected)
                 total_count = max(total_count, count)
             self._note_count = total_count
             self._last_export_time = datetime.datetime.now()
