@@ -735,9 +735,6 @@ def export_notes(config: ExportConfig) -> tuple[int, set[Path], int]:
                 tmp_path.unlink()
             except OSError:
                 pass
-        # Write manifest so cleanup knows which files b2ou created
-        if expected_paths:
-            _write_manifest(config.export_path, expected_paths)
         if lock_fh:
             try:
                 fcntl.flock(lock_fh, fcntl.LOCK_UN)
