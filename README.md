@@ -10,6 +10,19 @@ Latest release: [v6.1.0](https://github.com/desususu/B2OU/releases/tag/v6.1.0) �
 
 ---
 
+## macOS: “App is damaged and can’t be opened”
+
+If you download the app from GitHub and see “B2OU.app is damaged and can’t be opened”, this is macOS Gatekeeper.
+Without an Apple Developer ID, the app is **unsigned/not notarized**, so other Macs will block it by default.
+
+Pick one of these on the target Mac:
+- Remove the quarantine flag (most reliable):
+  `xattr -dr com.apple.quarantine "/Applications/B2OU.app"`
+- System Settings → Privacy & Security → click `Open Anyway` after the first failed launch.
+- Finder right‑click `B2OU.app` → `Open` → confirm.
+
+---
+
 ## Backup Required Before First Use (Important)
 
 Before running this tool for the first time, **please back up your Bear database**.

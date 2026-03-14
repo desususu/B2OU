@@ -10,6 +10,19 @@ Bear → Obsidian / Ulysses 导出工具（macOS）。
 
 ---
 
+## macOS 提示“已损坏，无法打开”
+
+如果从 GitHub 下载后出现“B2OU.app 已损坏，无法打开”，这是 macOS 的 Gatekeeper 限制。
+在没有 Apple Developer ID 的情况下，App **未签名/未公证**，其它 Mac 默认会拦截。
+
+请在目标 Mac 上任选其一：
+- 移除隔离属性（最稳妥）：
+  `xattr -dr com.apple.quarantine "/Applications/B2OU.app"`
+- 系统设置 → 隐私与安全性 → 在首次打开失败后点击 `仍要打开`。
+- Finder 中右键 `B2OU.app` → `打开` → 确认。
+
+---
+
 ## 首次使用前务必备份（重要）
 
 在第一次运行本工具之前，请先备份 Bear 数据库。
