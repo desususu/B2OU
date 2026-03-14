@@ -6,7 +6,7 @@
 
 Bear → Obsidian / Ulysses 导出工具（macOS）。
 
-最新版本：[v6.0.0](https://github.com/desususu/B2OU/releases/tag/v6.0.0) · 下载：[B2OU.app.zip](https://github.com/desususu/B2OU/releases/download/v6.0.0/B2OU.app.zip)
+最新版本：[v6.1.0](https://github.com/desususu/B2OU/releases/tag/v6.1.0) · 下载：[B2OU.app.zip](https://github.com/desususu/B2OU/releases/download/v6.1.0/B2OU.app.zip)
 
 ---
 
