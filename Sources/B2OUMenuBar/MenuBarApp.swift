@@ -294,8 +294,78 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func onConfigure() {
         if config == nil { runSetupWizard(); return }
-        // TODO: Native settings panel (Phase 4.2)
-        onEditConfig()
+        guard let cfg = config else { return }
+
+        let vals = SettingsValues(
+            exportPath: cfg.exportPath.path,
+            exportPathTB: cfg.exportPathTB?.path ?? "",
+            exportFormat: cfg.exportFormat,
+            yamlFrontMatter: cfg.yamlFrontMatter,
+            tagFolders: cfg.makeTagFolders,
+            hideTags: cfg.hideTags,
+            autoStart: isLoginItem(),
+            naming: cfg.naming,
+            onDelete: cfg.onDelete,
+            excludeTags: cfg.excludeTags.joined(separator: ", ")
+        )
+
+        showSettingsPanel(
+            values: vals,
+            onApply: { [weak self] applied in
+                self?.applySettings(applied)
+            },
+            onChangeFolder: { [weak self] in
+                self?.pickFolder(prompt: t("wizard.pick_prompt"))
+            }
+        )
+    }
+
+    private func applySettings(_ v: SettingsValues) {
+        let excludeList: [String] = v.excludeTags
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        writeConfigFile(
+            exportPath: v.exportPath,
+            exportFormat: v.exportFormat,
+            exportPathTB: v.exportFormat == "both" ? v.exportPathTB : nil,
+            yamlFrontMatter: v.yamlFrontMatter,
+            hideTags: v.hideTags,
+            tagFolders: v.tagFolders,
+            onDelete: v.onDelete,
+            naming: v.naming,
+            excludeTags: excludeList.isEmpty ? nil : excludeList
+        )
+
+        // Handle login item
+        if v.autoStart {
+            _ = addLoginItem()
+            loginItem.state = .on
+        } else {
+            _ = removeLoginItem()
+            loginItem.state = .off
+        }
+
+        reloadProfiles()
+        if config != nil {
+            watcher?.stop()
+            startWatcher()
+        }
+
+        // Confirmation alert
+        let alert = NSAlert()
+        alert.messageText = t("settings.applied_title")
+        if v.exportFormat == "both" {
+            alert.informativeText = t("settings.applied_msg_both")
+                .replacingOccurrences(of: "{path_md}", with: v.exportPath)
+                .replacingOccurrences(of: "{path_tb}", with: v.exportPathTB)
+        } else {
+            alert.informativeText = t("settings.applied_msg")
+                .replacingOccurrences(of: "{path}", with: v.exportPath)
+        }
+        alert.alertStyle = .informational
+        alert.runModal()
     }
 
     @objc private func onEditConfig() {
