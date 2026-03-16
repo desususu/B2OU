@@ -365,11 +365,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         reloadProfiles()
         if config != nil { startWatcher() }
 
-        let alert = NSAlert()
-        alert.messageText = "B2OU — " + t("wizard.ready")
-        alert.informativeText = t("wizard.ready_msg").replacingOccurrences(of: "{path}", with: path)
-        alert.alertStyle = .informational
-        alert.runModal()
+        let done = NSAlert()
+        done.messageText = "B2OU — " + t("wizard.ready")
+        done.informativeText = t("wizard.ready_msg").replacingOccurrences(of: "{path}", with: path)
+        done.alertStyle = .informational
+        done.runModal()
     }
 
     private func wizardAdvanced() {
