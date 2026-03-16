@@ -30,6 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // State
     private var config: ExportConfig?
     private var profiles: [String: ExportConfig] = [:]
+    private var activeProfileName: String?
     private var watcher: ExportWatcher?
     private var isPaused = false
 
@@ -41,9 +42,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Deferred startup: load profiles after the run loop is live
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.reloadProfiles()
-            if self?.config != nil {
-                self?.startWatcher()
-            } else {
+            if self?.config == nil {
                 self?.runSetupWizard()
             }
         }
@@ -179,7 +178,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         profileMenu.submenu = submenu
 
-        if config == nil, let firstName = profiles.keys.sorted().first {
+        // Re-select the active profile (picks up any config changes from disk)
+        if let name = activeProfileName, profiles[name] != nil {
+            setProfile(name)
+        } else if let firstName = profiles.keys.sorted().first {
             setProfile(firstName)
         }
     }
@@ -187,6 +189,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setProfile(_ name: String) {
         guard let cfg = profiles[name] else { return }
         config = cfg
+        activeProfileName = name
 
         if let submenu = profileMenu.submenu {
             for item in submenu.items {
@@ -301,10 +304,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let path = pickFolder(prompt: t("wizard.pick_advanced")) else { return }
         writeConfigFile(exportPath: path)
         reloadProfiles()
-        if config != nil {
-            watcher?.stop()
-            startWatcher()
-        }
     }
 
     @objc private func onConfigure() {
@@ -367,10 +366,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         reloadProfiles()
-        if config != nil {
-            watcher?.stop()
-            startWatcher()
-        }
 
         // Confirmation alert
         let alert = NSAlert()
@@ -452,7 +447,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         loginItem.state = .on
 
         reloadProfiles()
-        if config != nil { startWatcher() }
 
         let done = NSAlert()
         done.messageText = "B2OU — " + t("wizard.ready")
@@ -472,7 +466,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         writeConfigFile(exportPath: path)
         reloadProfiles()
-        if config != nil { startWatcher() }
     }
 
     // MARK: - Helpers
