@@ -365,11 +365,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         reloadProfiles()
         if config != nil { startWatcher() }
 
-        let notification = NSUserNotification()
-        notification.title = "B2OU"
-        notification.subtitle = t("wizard.ready")
-        notification.informativeText = t("wizard.ready_msg").replacingOccurrences(of: "{path}", with: path)
-        NSUserNotificationCenter.default.deliver(notification)
+        let alert = NSAlert()
+        alert.messageText = "B2OU — " + t("wizard.ready")
+        alert.informativeText = t("wizard.ready_msg").replacingOccurrences(of: "{path}", with: path)
+        alert.alertStyle = .informational
+        alert.runModal()
     }
 
     private func wizardAdvanced() {
@@ -522,7 +522,7 @@ class ExportWatcher {
     private func loop() {
         var lastSignature: (Double, Int) = (0.0, -1)
         var lastExportUnix: Double = 0
-        var consecutiveFailures = 0
+        let consecutiveFailures = 0
         var idleSleep = 2.0
         let idleMax = 30.0
 
