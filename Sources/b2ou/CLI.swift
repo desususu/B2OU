@@ -6,7 +6,12 @@ import ArgumentParser
 import B2OUCore
 import Foundation
 
+import Darwin.C
+
 let appVersion = "7.0.0"
+
+/// Global flag for signal handlers (C function pointers cannot capture context).
+private nonisolated(unsafe) var shutdownFlag = false
 
 @main
 struct B2OUCommand: ParsableCommand {
@@ -255,7 +260,7 @@ struct Clean: ParsableCommand {
 
         var removed = 0
         if let enumerator = fm.enumerator(at: exportPath, includingPropertiesForKeys: [.isDirectoryKey]) {
-            var skipSet: Set<String> = [".b2ou-trash", ".obsidian", "BearImages"]
+            let skipSet: Set<String> = [".b2ou-trash", ".obsidian", "BearImages"]
             while let url = enumerator.nextObject() as? URL {
                 let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
                 let name = url.lastPathComponent
@@ -374,18 +379,18 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
 
     writeStatus(statusFile, state: "watching", exportPath: cfg.exportPath.path)
 
-    var shutdown = false
-    signal(SIGINT) { _ in shutdown = true }
-    signal(SIGTERM) { _ in shutdown = true }
+    shutdownFlag = false
+    signal(SIGINT) { _ in shutdownFlag = true }
+    signal(SIGTERM) { _ in shutdownFlag = true }
 
     var lastSignature: (Double, Int) = (0.0, -1)
     var lastExportTime: Double = 0
     var consecutiveFailures = 0
-    var noteCount = 0
+    let noteCount = 0
     var idleSleep = 2.0
     let idleMax = 30.0
 
-    while !shutdown {
+    while !shutdownFlag {
         let sig = bearDBSignature(dbPath: cfg.bearDB)
         if sig == lastSignature || sig.noteCount < 0 {
             Thread.sleep(forTimeInterval: idleSleep)
@@ -404,7 +409,7 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
         if lastSignature.1 >= 0 {
             log("Bear database changed, waiting for writes to settle...")
             var waited = 0.0
-            while !shutdown && waited < debounce * 3 {
+            while !shutdownFlag && waited < debounce * 3 {
                 if dbIsQuiet(dbPath: cfg.bearDB, quietSeconds: debounce) { break }
                 Thread.sleep(forTimeInterval: 1.0)
                 waited += 1.0
@@ -413,12 +418,10 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
 
         writeStatus(statusFile, state: "exporting", noteCount: noteCount, exportPath: cfg.exportPath.path)
 
-        do {
-            runExport(cfg)
-            lastExportTime = Date().timeIntervalSince1970
-            consecutiveFailures = 0
-            writeStatus(statusFile, state: "idle", noteCount: noteCount, exportPath: cfg.exportPath.path)
-        }
+        runExport(cfg)
+        lastExportTime = Date().timeIntervalSince1970
+        consecutiveFailures = 0
+        writeStatus(statusFile, state: "idle", noteCount: noteCount, exportPath: cfg.exportPath.path)
 
         lastSignature = bearDBSignature(dbPath: cfg.bearDB)
         Thread.sleep(forTimeInterval: 2.0)
@@ -441,7 +444,7 @@ private func log(_ message: String) {
 }
 
 private func printErr(_ message: String) {
-    var stderr = FileHandle.standardError
+    let stderr = FileHandle.standardError
     stderr.write(Data("\(message)\n".utf8))
 }
 
