@@ -467,9 +467,3 @@ private func writeStatus(_ statusFile: URL?, state: String,
     try? FileManager.default.moveItem(at: tmp, to: statusFile)
 }
 
-// Signal handler workaround
-private var shutdownFlag = false
-
-private func signalHandler(_ sig: Int32) {
-    shutdownFlag = true
-}
