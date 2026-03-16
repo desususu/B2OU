@@ -141,7 +141,22 @@ public let strings: [String: [String: String]] = [
         "settings.folder_tb_conflict": "Markdown and TextBundle folders must be different.",
         "settings.format_none": "Please select at least one export format.",
 
+        // Scheduled backup
+        "settings.backup": "Scheduled Backup",
+        "settings.backup_interval": "Backup Interval",
+        "settings.backup_off": "Off",
+        "settings.backup_30m": "Every 30 minutes",
+        "settings.backup_1h": "Every hour",
+        "settings.backup_2h": "Every 2 hours",
+        "settings.backup_6h": "Every 6 hours",
+        "settings.backup_12h": "Every 12 hours",
+        "settings.backup_24h": "Every 24 hours",
+        "settings.backup_folder": "Backup Folder",
+        "settings.backup_default": "(default: .b2ou-backups in export folder)",
+        "menu.last_backup": "Last backup: {time}",
+
         // Help text
+        "help.backup_interval": "Periodically create a snapshot of the Bear database as a standalone SQLite file.\n\nBackups are lightweight and run in the background without interfering with exports. Old backups are automatically rotated (up to 24 kept).\n\nThe backup folder is set to .b2ou-backups inside the export folder by default.",
         "help.format": "Markdown (.md): Plain Markdown files with a shared images folder. Best for Obsidian.\n\nTextBundle (.textbundle): Each note is a bundle with embedded images. Best for Ulysses.\n\nBoth: Export to separate Markdown and TextBundle folders.",
         "help.yaml": "Add YAML front matter (title, tags, dates) at the top of each exported note.\n\nUseful for static site generators (Hugo, Jekyll) and Obsidian metadata queries.",
         "help.tag_folders": "Create subfolders based on Bear tags.\n\nFor example, a note tagged #work/meetings will be placed in work/meetings/ folder.\nNotes with multiple tags are copied to each tag folder.",
@@ -234,6 +249,20 @@ public let strings: [String: [String: String]] = [
         "settings.folder_tb_conflict": "Markdown \u{548c} TextBundle \u{7684}\u{5bfc}\u{51fa}\u{6587}\u{4ef6}\u{5939}\u{5fc5}\u{987b}\u{4e0d}\u{540c}\u{3002}",
         "settings.format_none": "\u{8bf7}\u{81f3}\u{5c11}\u{9009}\u{62e9}\u{4e00}\u{79cd}\u{5bfc}\u{51fa}\u{683c}\u{5f0f}\u{3002}",
 
+        "settings.backup": "\u{5b9a}\u{65f6}\u{5907}\u{4efd}",
+        "settings.backup_interval": "\u{5907}\u{4efd}\u{95f4}\u{9694}",
+        "settings.backup_off": "\u{5173}\u{95ed}",
+        "settings.backup_30m": "\u{6bcf} 30 \u{5206}\u{949f}",
+        "settings.backup_1h": "\u{6bcf}\u{5c0f}\u{65f6}",
+        "settings.backup_2h": "\u{6bcf} 2 \u{5c0f}\u{65f6}",
+        "settings.backup_6h": "\u{6bcf} 6 \u{5c0f}\u{65f6}",
+        "settings.backup_12h": "\u{6bcf} 12 \u{5c0f}\u{65f6}",
+        "settings.backup_24h": "\u{6bcf} 24 \u{5c0f}\u{65f6}",
+        "settings.backup_folder": "\u{5907}\u{4efd}\u{6587}\u{4ef6}\u{5939}",
+        "settings.backup_default": "(\u{9ed8}\u{8ba4}: \u{5bfc}\u{51fa}\u{6587}\u{4ef6}\u{5939}\u{4e2d}\u{7684} .b2ou-backups)",
+        "menu.last_backup": "\u{4e0a}\u{6b21}\u{5907}\u{4efd}: {time}",
+
+        "help.backup_interval": "\u{5b9a}\u{671f}\u{5c06} Bear \u{6570}\u{636e}\u{5e93}\u{521b}\u{5efa}\u{4e3a}\u{72ec}\u{7acb}\u{7684} SQLite \u{5feb}\u{7167}\u{6587}\u{4ef6}\u{3002}\n\n\u{5907}\u{4efd}\u{8f7b}\u{91cf}\u{8fd0}\u{884c}\u{ff0c}\u{4e0d}\u{4f1a}\u{5f71}\u{54cd}\u{5bfc}\u{51fa}\u{3002}\u{65e7}\u{5907}\u{4efd}\u{81ea}\u{52a8}\u{8f6e}\u{6362}\u{ff08}\u{6700}\u{591a}\u{4fdd}\u{7559} 24 \u{4efd}\u{ff09}\u{3002}\n\n\u{5907}\u{4efd}\u{6587}\u{4ef6}\u{5939}\u{9ed8}\u{8ba4}\u{4e3a}\u{5bfc}\u{51fa}\u{6587}\u{4ef6}\u{5939}\u{4e2d}\u{7684} .b2ou-backups\u{3002}",
         "help.format": "Markdown (.md): \u{7eaf} Markdown \u{6587}\u{4ef6}\u{ff0c}\u{56fe}\u{7247}\u{5b58}\u{653e}\u{5728}\u{5171}\u{4eab}\u{6587}\u{4ef6}\u{5939}\u{4e2d}\u{3002}\u{9002}\u{5408} Obsidian\u{3002}\n\nTextBundle (.textbundle): \u{6bcf}\u{7bc7}\u{7b14}\u{8bb0}\u{5305}\u{542b}\u{5185}\u{5d4c}\u{56fe}\u{7247}\u{3002}\u{9002}\u{5408} Ulysses\u{3002}\n\n\u{540c}\u{65f6}\u{5bfc}\u{51fa}: \u{9700}\u{5206}\u{522b}\u{4f7f}\u{7528} Markdown \u{548c} TextBundle \u{7684}\u{4e24}\u{4e2a}\u{6587}\u{4ef6}\u{5939}\u{3002}",
         "help.yaml": "\u{5728}\u{6bcf}\u{7bc7}\u{5bfc}\u{51fa}\u{7b14}\u{8bb0}\u{9876}\u{90e8}\u{6dfb}\u{52a0} YAML \u{5143}\u{6570}\u{636e}\u{ff08}\u{6807}\u{9898}\u{3001}\u{6807}\u{7b7e}\u{3001}\u{65e5}\u{671f}\u{ff09}\u{3002}\n\n\u{9002}\u{7528}\u{4e8e}\u{9759}\u{6001}\u{7f51}\u{7ad9}\u{751f}\u{6210}\u{5668} (Hugo, Jekyll) \u{548c} Obsidian \u{5143}\u{6570}\u{636e}\u{67e5}\u{8be2}\u{3002}",
         "help.tag_folders": "\u{6839}\u{636e} Bear \u{6807}\u{7b7e}\u{521b}\u{5efa}\u{5b50}\u{6587}\u{4ef6}\u{5939}\u{3002}\n\n\u{4f8b}\u{5982}\u{ff0c}\u{6807}\u{8bb0}\u{4e3a} #work/meetings \u{7684}\u{7b14}\u{8bb0}\u{4f1a}\u{653e}\u{5728} work/meetings/ \u{6587}\u{4ef6}\u{5939}\u{4e2d}\u{3002}\n\u{6709}\u{591a}\u{4e2a}\u{6807}\u{7b7e}\u{7684}\u{7b14}\u{8bb0}\u{4f1a}\u{590d}\u{5236}\u{5230}\u{6bcf}\u{4e2a}\u{6807}\u{7b7e}\u{6587}\u{4ef6}\u{5939}\u{3002}",

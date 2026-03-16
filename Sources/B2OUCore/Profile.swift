@@ -126,6 +126,14 @@ private func parseProfile(name: String, data: [String: Any]) throws -> ExportCon
         throw B2OUError.missingOutputPath("\(name) (out-tb)")
     }
 
+    let backupPathStr = data["backup-path"] as? String
+    var backupInterval = 0
+    if let v = data["backup-interval"] as? Double { backupInterval = Int(v) }
+    else if let v = data["backup-interval"] as? Int64 { backupInterval = Int(v) }
+    var backupMaxKeep = 24
+    if let v = data["backup-max-keep"] as? Double { backupMaxKeep = Int(v) }
+    else if let v = data["backup-max-keep"] as? Int64 { backupMaxKeep = Int(v) }
+
     return ExportConfig(
         exportPath: URL(fileURLWithPath: (out as NSString).expandingTildeInPath),
         exportPathTB: outTB.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) },
@@ -137,7 +145,10 @@ private func parseProfile(name: String, data: [String: Any]) throws -> ExportCon
         excludeTags: (data["exclude-tags"] as? [String]) ?? [],
         yamlFrontMatter: (data["yaml-front-matter"] as? Bool) ?? false,
         naming: (data["naming"] as? String) ?? "title",
-        onDelete: (data["on-delete"] as? String) ?? "trash"
+        onDelete: (data["on-delete"] as? String) ?? "trash",
+        backupInterval: backupInterval,
+        backupPath: backupPathStr.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) },
+        backupMaxKeep: backupMaxKeep
     )
 }
 

@@ -50,6 +50,11 @@ public struct ExportConfig: Sendable {
     // Stale-file policy: "trash", "remove", "keep"
     public var onDelete: String
 
+    // Scheduled backup: interval in minutes (0 = disabled), max kept backups
+    public var backupInterval: Int
+    public var backupPath: URL?
+    public var backupMaxKeep: Int
+
     public init(
         exportPath: URL,
         exportPathTB: URL? = nil,
@@ -65,7 +70,10 @@ public struct ExportConfig: Sendable {
         excludeTags: [String] = [],
         yamlFrontMatter: Bool = false,
         naming: String = "title",
-        onDelete: String = "trash"
+        onDelete: String = "trash",
+        backupInterval: Int = 0,
+        backupPath: URL? = nil,
+        backupMaxKeep: Int = 24
     ) {
         self.exportPath = exportPath
         self.exportPathTB = exportPathTB
@@ -82,6 +90,9 @@ public struct ExportConfig: Sendable {
         self.yamlFrontMatter = yamlFrontMatter
         self.naming = naming
         self.onDelete = onDelete
+        self.backupInterval = backupInterval
+        self.backupPath = backupPath
+        self.backupMaxKeep = backupMaxKeep
     }
 
     // MARK: - Derived Flags

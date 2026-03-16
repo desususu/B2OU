@@ -10,7 +10,7 @@ import B2OUCore
 // MARK: - Layout Constants
 
 private let winWidth:  CGFloat = 520
-private let winHeight: CGFloat = 760
+private let winHeight: CGFloat = 870
 private let pad:       CGFloat = 24
 private let contentW:  CGFloat = winWidth - pad * 2
 private let rowH:      CGFloat = 28
@@ -37,9 +37,12 @@ private let helpTags: [Int: String] = [
     7: "help.naming",
     8: "help.on_delete",
     9: "help.exclude_tags",
+    10: "help.backup_interval",
 ]
 
 // MARK: - Settings Values
+
+private let backupIntervalKeys = [0, 30, 60, 120, 360, 720, 1440]
 
 struct SettingsValues {
     var exportPath: String
@@ -52,6 +55,8 @@ struct SettingsValues {
     var naming: String         // "title", "slug", "date-title", "id"
     var onDelete: String       // "trash", "remove", "keep"
     var excludeTags: String
+    var backupInterval: Int    // minutes, 0 = disabled
+    var backupPath: String
 }
 
 // MARK: - Callbacks
@@ -174,6 +179,10 @@ class SettingsPanelController: NSObject {
     private var toggleAutoStart: NSSwitch?
     private var popupNaming: NSPopUpButton?
     private var popupDelete: NSPopUpButton?
+    private var popupBackup: NSPopUpButton?
+    private var backupFolderLabel: NSTextField?
+    private var changeBackupBtn: NSButton?
+    private var backupControls: [NSView] = []
     private var fieldExclude: NSTextField?
     private var folderLabel: NSTextField?
     private var folderTBLabel: NSTextField?
@@ -366,6 +375,53 @@ class SettingsPanelController: NSObject {
 
         cy -= sectionGap
 
+        // ── Scheduled Backup ────────────────────────────────
+        cy -= rowH
+        content.addSubview(makeLabel(t("settings.backup"), x: x0, y: cy, bold: true))
+        content.addSubview(makeInfoButton(tag: 10, x: infoX, y: cy, target: self, action: #selector(onInfo(_:))))
+
+        cy -= rowH
+        content.addSubview(makeLabel(t("settings.backup_interval"), x: x0, y: cy))
+        popupBackup = NSPopUpButton(frame: NSRect(x: popupX, y: cy, width: popupW, height: rowH), pullsDown: false)
+        popupBackup?.addItems(withTitles: [
+            t("settings.backup_off"),
+            t("settings.backup_30m"),
+            t("settings.backup_1h"),
+            t("settings.backup_2h"),
+            t("settings.backup_6h"),
+            t("settings.backup_12h"),
+            t("settings.backup_24h"),
+        ])
+        if let idx = backupIntervalKeys.firstIndex(of: v.backupInterval) {
+            popupBackup?.selectItem(at: idx)
+        }
+        popupBackup?.target = self
+        popupBackup?.action = #selector(onBackupIntervalChanged(_:))
+        content.addSubview(popupBackup!)
+
+        // Backup folder
+        cy -= rowH
+        let backupFolderTitle = makeLabel(t("settings.backup_folder"), x: x0 + 18, y: cy)
+        content.addSubview(backupFolderTitle)
+
+        cy -= rowH
+        let backupDisplay = v.backupPath.isEmpty ? t("settings.backup_default") : v.backupPath
+        backupFolderLabel = makeLabel(backupDisplay, x: x0 + 18, y: cy, width: contentW - 90 - 18)
+        backupFolderLabel?.lineBreakMode = .byTruncatingMiddle
+        content.addSubview(backupFolderLabel!)
+
+        changeBackupBtn = NSButton(frame: NSRect(x: right - 80, y: cy, width: 80, height: rowH))
+        changeBackupBtn?.title = t("settings.change")
+        changeBackupBtn?.bezelStyle = .rounded
+        changeBackupBtn?.target = self
+        changeBackupBtn?.action = #selector(onChangeFolderBackup(_:))
+        content.addSubview(changeBackupBtn!)
+
+        backupControls = [backupFolderTitle, backupFolderLabel!, changeBackupBtn!]
+        setControlsEnabled(backupControls, enabled: v.backupInterval > 0)
+
+        cy -= sectionGap
+
         // ── Exclude Tags ────────────────────────────────────
         cy -= rowH
         content.addSubview(makeLabel(t("settings.exclude_tags"), x: x0, y: cy, bold: true))
@@ -426,6 +482,19 @@ class SettingsPanelController: NSObject {
         let tbOn = checkTB?.state == .on
         setControlsEnabled(mdControls, enabled: mdOn)
         setControlsEnabled(tbControls, enabled: tbOn)
+    }
+
+    @objc private func onBackupIntervalChanged(_ sender: Any) {
+        let idx = popupBackup?.indexOfSelectedItem ?? 0
+        let enabled = idx > 0
+        setControlsEnabled(backupControls, enabled: enabled)
+    }
+
+    @objc private func onChangeFolderBackup(_ sender: Any) {
+        if let newPath = onChangeFolder?() {
+            values.backupPath = newPath
+            backupFolderLabel?.stringValue = newPath
+        }
     }
 
     @objc private func onApplyClicked(_ sender: Any) {
@@ -489,6 +558,12 @@ class SettingsPanelController: NSObject {
         }
 
         v.excludeTags = fieldExclude?.stringValue ?? ""
+
+        if let idx = popupBackup?.indexOfSelectedItem, idx >= 0, idx < backupIntervalKeys.count {
+            v.backupInterval = backupIntervalKeys[idx]
+        }
+        v.backupPath = backupFolderLabel?.stringValue ?? ""
+        if v.backupPath == t("settings.backup_default") { v.backupPath = "" }
 
         close()
         onApply?(v)

@@ -238,7 +238,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 formatter.dateFormat = "HH:mm"
                 timeStr = formatter.string(from: lastExport)
             }
-            lastExportMenuItem.title = t("menu.last_export").replacingOccurrences(of: "{time}", with: timeStr)
+            var statusLine = t("menu.last_export").replacingOccurrences(of: "{time}", with: timeStr)
+            if let lastBackup = watcher.lastBackupTime {
+                let backupAgo = Date().timeIntervalSince(lastBackup)
+                let backupStr: String
+                if backupAgo < 60 {
+                    backupStr = t("menu.just_now")
+                } else if backupAgo < 3600 {
+                    backupStr = t("menu.min_ago").replacingOccurrences(of: "{mins}", with: "\(Int(backupAgo / 60))")
+                } else {
+                    let fmt = DateFormatter()
+                    fmt.dateFormat = "HH:mm"
+                    backupStr = fmt.string(from: lastBackup)
+                }
+                statusLine += "  \u{2022}  " + t("menu.last_backup").replacingOccurrences(of: "{time}", with: backupStr)
+            }
+            lastExportMenuItem.title = statusLine
         } else {
             lastExportMenuItem.title = ""
         }
@@ -306,7 +321,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             autoStart: isLoginItem(),
             naming: cfg.naming,
             onDelete: cfg.onDelete,
-            excludeTags: cfg.excludeTags.joined(separator: ", ")
+            excludeTags: cfg.excludeTags.joined(separator: ", "),
+            backupInterval: cfg.backupInterval,
+            backupPath: cfg.backupPath?.path ?? ""
         )
 
         showSettingsPanel(
@@ -335,7 +352,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             tagFolders: v.tagFolders,
             onDelete: v.onDelete,
             naming: v.naming,
-            excludeTags: excludeList.isEmpty ? nil : excludeList
+            excludeTags: excludeList.isEmpty ? nil : excludeList,
+            backupInterval: v.backupInterval,
+            backupPath: v.backupPath.isEmpty ? nil : v.backupPath
         )
 
         // Handle login item
@@ -478,7 +497,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         tagFolders: Bool = false,
         onDelete: String = "trash",
         naming: String = "title",
-        excludeTags: [String]? = nil
+        excludeTags: [String]? = nil,
+        backupInterval: Int = 0,
+        backupPath: String? = nil
     ) {
         let configDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/b2ou")
@@ -503,6 +524,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let tags = excludeTags, !tags.isEmpty {
             let tagsStr = tags.map { "\"\(tomlEscape($0))\"" }.joined(separator: ", ")
             lines.append("exclude-tags = [\(tagsStr)]")
+        }
+        if backupInterval > 0 {
+            lines.append("backup-interval = \(backupInterval)")
+        }
+        if let bp = backupPath, !bp.isEmpty {
+            lines.append("backup-path = \"\(tomlEscape(bp))\"")
         }
         lines.append("")
 
@@ -567,9 +594,11 @@ class ExportWatcher {
     private var thread: Thread?
     private var _lastExportTime: Date?
     private var _noteCount = 0
+    private var _lastBackupTime: Date?
 
     var lastExportTime: Date? { _lastExportTime }
     var noteCount: Int { _noteCount }
+    var lastBackupTime: Date? { _lastBackupTime }
 
     init(config: ExportConfig, onUpdate: ((Int, String?) -> Void)? = nil) {
         self.config = config
@@ -597,6 +626,9 @@ class ExportWatcher {
         let idleMax = 30.0
 
         while running {
+            // Check scheduled backup (runs even when paused to maintain schedule)
+            checkScheduledBackup()
+
             if !paused {
                 let sig = bearDBSignature(dbPath: config.bearDB)
                 if sig == lastSignature || sig.noteCount < 0 {
@@ -629,6 +661,59 @@ class ExportWatcher {
                 Thread.sleep(forTimeInterval: 2.0)
             }
             Thread.sleep(forTimeInterval: 2.0)
+        }
+    }
+
+    // MARK: - Scheduled Backup
+
+    private func checkScheduledBackup() {
+        guard config.backupInterval > 0 else { return }
+
+        let intervalSecs = TimeInterval(config.backupInterval * 60)
+        if let last = _lastBackupTime, Date().timeIntervalSince(last) < intervalSecs {
+            return
+        }
+
+        let backupDir = config.backupPath ?? config.exportPath.appendingPathComponent(".b2ou-backups")
+        let fm = FileManager.default
+        try? fm.createDirectory(at: backupDir, withIntermediateDirectories: true)
+        // Restrictive permissions on backup directory
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: backupDir.path)
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        let filename = "bear-backup-\(formatter.string(from: Date())).sqlite"
+        let destPath = backupDir.appendingPathComponent(filename)
+
+        do {
+            let conn = try SQLiteConnection(path: config.bearDB.path, readOnly: true)
+            try conn.backupTo(destPath.path)
+            // Set restrictive permissions on backup file
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destPath.path)
+            _lastBackupTime = Date()
+            rotateBackups(in: backupDir)
+        } catch {
+            // Backup failed silently — will retry next interval
+        }
+
+        onUpdate?(_noteCount, nil)
+    }
+
+    private func rotateBackups(in dir: URL) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey])
+            .filter({ $0.lastPathComponent.hasPrefix("bear-backup-") && $0.pathExtension == "sqlite" })
+            .sorted(by: { a, b in
+                let da = (try? a.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                let db = (try? b.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                return da > db
+            }) else { return }
+
+        let maxKeep = max(1, config.backupMaxKeep)
+        if files.count > maxKeep {
+            for file in files[maxKeep...] {
+                try? fm.removeItem(at: file)
+            }
         }
     }
 
