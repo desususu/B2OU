@@ -667,8 +667,13 @@ class ExportWatcher {
 
 // MARK: - Entry Point
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory) // Menu bar only, no Dock icon
-app.run()
+@main
+enum Main {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory) // Menu bar only, no Dock icon
+        app.run()
+    }
+}

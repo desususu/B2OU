@@ -68,7 +68,7 @@ private func makeLabel(
 ) -> NSTextField {
     let label: NSTextField
     if wrap {
-        label = NSTextField.wrappingLabelWithString(text)
+        label = NSTextField(wrappingLabelWithString: text)
     } else {
         label = NSTextField(labelWithString: text)
     }
