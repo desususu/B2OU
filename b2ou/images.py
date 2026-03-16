@@ -143,6 +143,7 @@ def process_export_images(
     assets_path: Path,
     export_path: Path,
     bear_file_path: Path | None = None,
+    file_map: dict[str, str] | None = None,
 ) -> str:
     """
     Rewrite Bear image/file references in *text* to point at *assets_path*
@@ -154,12 +155,13 @@ def process_export_images(
     • Bear 2.x: ``![alt](filename)``      → linked via ZSFNOTEFILE UUID lookup
     """
     # Build filename → UUID map for all files attached to this note
-    file_map: dict[str, str] = {}
-    for row in conn.execute(
-        "SELECT ZFILENAME, ZUNIQUEIDENTIFIER FROM ZSFNOTEFILE WHERE ZNOTE = ?",
-        (note_pk,),
-    ):
-        file_map[row["ZFILENAME"]] = row["ZUNIQUEIDENTIFIER"]
+    if file_map is None:
+        file_map = {}
+        for row in conn.execute(
+            "SELECT ZFILENAME, ZUNIQUEIDENTIFIER FROM ZSFNOTEFILE WHERE ZNOTE = ?",
+            (note_pk,),
+        ):
+            file_map[row["ZFILENAME"]] = row["ZUNIQUEIDENTIFIER"]
 
     rel_assets = os.path.relpath(assets_path, export_path)
     exported_filenames: set[str] = set()
@@ -298,6 +300,7 @@ def process_export_images_textbundle(
     bear_image_path: Path,
     bear_file_path: Path | None = None,
     existing_assets: Path | None = None,
+    file_map: dict[str, str] | None = None,
 ) -> str:
     """
     Like ``process_export_images`` but for TextBundle format.
@@ -306,12 +309,13 @@ def process_export_images_textbundle(
     ``.textbundle``).
     """
     # Build UUID→filename map for all attachments
-    file_map: dict[str, str] = {}
-    for row in conn.execute(
-        "SELECT ZFILENAME, ZUNIQUEIDENTIFIER FROM ZSFNOTEFILE WHERE ZNOTE = ?",
-        (note_pk,),
-    ):
-        file_map[row["ZFILENAME"]] = row["ZUNIQUEIDENTIFIER"]
+    if file_map is None:
+        file_map = {}
+        for row in conn.execute(
+            "SELECT ZFILENAME, ZUNIQUEIDENTIFIER FROM ZSFNOTEFILE WHERE ZNOTE = ?",
+            (note_pk,),
+        ):
+            file_map[row["ZFILENAME"]] = row["ZUNIQUEIDENTIFIER"]
 
     exported_filenames: set[str] = set()
 

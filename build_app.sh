@@ -181,9 +181,9 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <key>CFBundleIdentifier</key>
     <string>net.b2ou.app</string>
     <key>CFBundleVersion</key>
-    <string>6.0.0</string>
+    <string>6.1.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>6.0</string>
+    <string>6.1.0</string>
     <key>CFBundleExecutable</key>
     <string>B2OU</string>
     <key>CFBundleIconFile</key>

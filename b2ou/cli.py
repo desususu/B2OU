@@ -352,14 +352,11 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 0
 
     file_count = 0
-    for _, _, files in os.walk(export_path):
-        for f in files:
-            if f.endswith((".md", ".txt", ".markdown", ".textbundle")):
-                file_count += 1
-
-    # Also count .textbundle directories
     bundle_count = 0
-    for _, dirs, _ in os.walk(export_path):
+    for _, dirs, files in os.walk(export_path):
+        for f in files:
+            if f.endswith((".md", ".txt", ".markdown")):
+                file_count += 1
         for d in dirs:
             if d.endswith(".textbundle"):
                 bundle_count += 1

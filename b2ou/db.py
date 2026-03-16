@@ -227,6 +227,19 @@ def get_note_files(conn: sqlite3.Connection, note_pk: int) -> list[NoteFile]:
             for r in rows]
 
 
+def build_note_file_map(conn: sqlite3.Connection) -> dict[int, dict[str, str]]:
+    """Batch-query all note files and return ``{note_pk: {filename: uuid}}``."""
+    result: dict[int, dict[str, str]] = {}
+    for row in conn.execute(
+        "SELECT ZNOTE, ZFILENAME, ZUNIQUEIDENTIFIER FROM ZSFNOTEFILE"
+    ):
+        pk = int(row["ZNOTE"])
+        if pk not in result:
+            result[pk] = {}
+        result[pk][row["ZFILENAME"]] = row["ZUNIQUEIDENTIFIER"]
+    return result
+
+
 def get_note_files_by_uuid(
     conn: sqlite3.Connection, note_uuid: str
 ) -> list[NoteFile]:

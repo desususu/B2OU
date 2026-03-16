@@ -26,8 +26,8 @@ OPTIONS = {
         "CFBundleName": APP_NAME,
         "CFBundleDisplayName": "B2OU — Bear Export",
         "CFBundleIdentifier": "net.b2ou.app",
-        "CFBundleVersion": "5.0.0",
-        "CFBundleShortVersionString": "5.0",
+        "CFBundleVersion": "6.1.0",
+        "CFBundleShortVersionString": "6.1.0",
         "LSUIElement": True,  # menu-bar only, no Dock icon
         "NSHumanReadableCopyright": "MIT License",
         "CFBundleDocumentTypes": [],

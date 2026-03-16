@@ -49,6 +49,10 @@ _EMOJI_PAUSED = "\u275A\u275A"    # ❚❚ Pause bars — export paused
 _EMOJI_ERROR = "\u26A0\uFE0E"    # ⚠︎ Warning — needs attention
 
 
+import functools
+
+
+@functools.lru_cache(maxsize=1)
 def _find_icon_dir() -> Optional[Path]:
     """Locate the icons directory in resources/ or the PyInstaller bundle."""
     # PyInstaller frozen bundle
@@ -807,11 +811,18 @@ class B2OUApp(rumps.App):
         config_path = find_config()
         if config_path:
             try:
+                import re as _re
                 content = config_path.read_text()
-                old_out = str(self.cfg.export_path)
-                content = content.replace(
-                    f'out = "{old_out}"',
-                    f'out = "{new_path}"',
+                old_escaped = _toml_escape(str(self.cfg.export_path))
+                new_escaped = _toml_escape(new_path)
+                # Use regex to match 'out = "..."' with flexible whitespace
+                pattern = _re.compile(
+                    r'(out\s*=\s*")' + _re.escape(old_escaped) + r'"'
+                )
+                content = pattern.sub(
+                    r'\g<1>' + new_escaped.replace('\\', '\\\\') + '"',
+                    content,
+                    count=1,
                 )
                 config_path.write_text(content)
             except OSError:

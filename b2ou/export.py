@@ -28,7 +28,7 @@ from b2ou.constants import (
     IMAGE_EXTENSIONS,
     SENTINEL_FILES,
 )
-from b2ou.db import BearNote, copy_and_open, core_data_to_unix, iter_notes
+from b2ou.db import BearNote, build_note_file_map, copy_and_open, core_data_to_unix, iter_notes
 from b2ou.images import (
     collect_referenced_local_images,
     copy_incremental,
@@ -42,34 +42,48 @@ from b2ou.markdown import (
     normalise_bear_markdown,
     sub_path_from_tag,
 )
+_libc_cached = None
+
+
+def _get_libc():
+    """Return the cached libc handle for setattrlist calls."""
+    global _libc_cached
+    if _libc_cached is None:
+        import ctypes
+        import ctypes.util
+        _libc_cached = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    return _libc_cached
+
+
 def set_creation_date(filepath: Path, unix_timestamp: float) -> None:
     """Set the file's creation date (birthtime) via setattrlist(2).
 
     Uses ctypes to call the macOS setattrlist syscall directly, avoiding the
     ~90 MB memory overhead of importing the Foundation framework.
     """
-    import ctypes
-    import ctypes.util
-    import struct
     import sys
 
     if sys.platform != "darwin":
         return
 
+    import ctypes
+    import struct
+
     try:
-        _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        libc = _get_libc()
         ATTR_BIT_MAP_COUNT = 5
         ATTR_CMN_CRTIME = 0x00000200
         secs = int(unix_timestamp)
         nsecs = int((unix_timestamp - secs) * 1_000_000_000)
         # struct timespec {time_t tv_sec; long tv_nsec;}
         timespec = struct.pack("ll", secs, nsecs)
-        # struct attrlist {bitmapcount, reserved, commonattr, volattr, dirattr,
+        # struct attrlist {u_short bitmapcount, u_short reserved,
+        #                  attrgroup_t commonattr, volattr, dirattr,
         #                  fileattr, forkattr}
-        attrlist = struct.pack("IIIII", ATTR_BIT_MAP_COUNT, 0,
-                               ATTR_CMN_CRTIME, 0, 0)
+        attrlist = struct.pack("HH5I", ATTR_BIT_MAP_COUNT, 0,
+                               ATTR_CMN_CRTIME, 0, 0, 0, 0)
         path_bytes = str(filepath).encode("utf-8") + b"\x00"
-        ret = _libc.setattrlist(path_bytes, attrlist, timespec,
+        ret = libc.setattrlist(path_bytes, attrlist, timespec,
                                 len(timespec), 0)
         if ret != 0:
             errno = ctypes.get_errno()
@@ -470,6 +484,7 @@ def make_text_bundle(
     bear_image_path: Path,
     note_uuid: str = "",
     bear_file_path: Path | None = None,
+    file_map: dict[str, str] | None = None,
 ) -> None:
     """Write a ``.textbundle`` for *text* at *filepath* (without extension).
 
@@ -503,6 +518,7 @@ def make_text_bundle(
             text, tmp_assets, conn, note_pk, bear_image_path,
             bear_file_path=bear_file_path,
             existing_assets=existing_assets,
+            file_map=file_map,
         )
 
         write_note_file(tmp_bundle / "text.md", text, mod_unix, 0)
@@ -593,6 +609,7 @@ def export_notes(config: ExportConfig) -> tuple[int, set[Path], int]:
         return 0, set(), -1
 
     conn, tmp_path = copy_and_open(config.bear_db)
+    all_file_maps = build_note_file_map(conn)
     note_count = 0
     changed_count = 0
     expected_paths: set[Path] = set()
@@ -656,9 +673,15 @@ def export_notes(config: ExportConfig) -> tuple[int, set[Path], int]:
                     exclude_tags=config.exclude_tags,
                 )
             else:
-                is_excluded = any(
-                    ("#" + tag) in raw_text for tag in config.exclude_tags
-                )
+                if config.exclude_tags:
+                    note_tags = extract_tags(raw_text)
+                    is_excluded = any(
+                        nt.lower().startswith(et.lower())
+                        for nt in note_tags
+                        for et in config.exclude_tags
+                    )
+                else:
+                    is_excluded = False
                 file_list = (
                     []
                     if is_excluded
@@ -668,6 +691,7 @@ def export_notes(config: ExportConfig) -> tuple[int, set[Path], int]:
             if not file_list:
                 continue
 
+            note_count += 1
             seen_paths: set[str] = set()
             for filepath_str in file_list:
                 if filepath_str in seen_paths:
@@ -675,7 +699,6 @@ def export_notes(config: ExportConfig) -> tuple[int, set[Path], int]:
                 seen_paths.add(filepath_str)
 
                 filepath = Path(filepath_str)
-                note_count += 1
                 as_textbundle = (
                     config.export_as_textbundles
                     and _should_use_textbundle(raw_text, filepath, config)
@@ -700,12 +723,14 @@ def export_notes(config: ExportConfig) -> tuple[int, set[Path], int]:
 
                 # ── Full export ───────────────────────────────────────────
                 changed_count += 1
+                note_file_map = all_file_maps.get(note.pk, {})
                 if as_textbundle:
                     make_text_bundle(
                         front_matter + text, filepath, mod_unix,
                         note.creation_date, conn, note.pk,
                         config.bear_image_path, note_uuid=note.uuid,
                         bear_file_path=config.bear_file_path,
+                        file_map=note_file_map,
                     )
                     expected_paths.add(target)
                 elif config.export_image_repository:
@@ -715,6 +740,7 @@ def export_notes(config: ExportConfig) -> tuple[int, set[Path], int]:
                         config.assets_path,
                         config.export_path,
                         bear_file_path=config.bear_file_path,
+                        file_map=note_file_map,
                     )
                     write_note_file(
                         target, front_matter + processed,
@@ -754,5 +780,5 @@ def _should_use_textbundle(
     tb = Path(str(filepath) + ".textbundle")
     if tb.exists():
         return True
-    from b2ou.constants import RE_BEAR_IMAGE
-    return bool(RE_BEAR_IMAGE.search(text) or __import__("re").search(r"!\[", text))
+    from b2ou.constants import RE_BEAR_IMAGE, RE_MD_IMAGE
+    return bool(RE_BEAR_IMAGE.search(text) or RE_MD_IMAGE.search(text))

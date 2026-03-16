@@ -120,7 +120,15 @@ def sub_path_from_tag(
     import os
 
     if not make_tag_folders:
-        is_excluded = any(("#" + tag) in text for tag in exclude_tags)
+        if exclude_tags:
+            note_tags = extract_tags(text)
+            is_excluded = any(
+                nt.lower().startswith(et.lower())
+                for nt in note_tags
+                for et in exclude_tags
+            )
+        else:
+            is_excluded = False
         return [] if is_excluded else [os.path.join(base_path, filename)]
 
     if multi_tag_folders:
