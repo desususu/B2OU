@@ -31,11 +31,11 @@ public let reBearEmbed = try! NSRegularExpression(pattern: #"<!--\s*\{\s*"embed"
 // MARK: - Tags
 
 /// #tag or #nested/tag
-public let reTagPattern1 = try! NSRegularExpression(pattern: #"(?<!\S)\#([.\w\/\-]+)[ \n]?(?!([\/ \w]+\w[#]))"#)
+public let reTagPattern1 = try! NSRegularExpression(pattern: ##"(?<!\S)\#([.\w\/\-]+)[ \n]?(?!([\/ \w]+\w[#]))"##)
 /// Multi-word tags: #multi word tag#
-public let reTagPattern2 = try! NSRegularExpression(pattern: #"(?<![\S])\#([^ \d][.\w\/ ]+?)\#([ \n]|$)"#)
+public let reTagPattern2 = try! NSRegularExpression(pattern: ##"(?<![\S])\#([^ \d][.\w\/ ]+?)\#([ \n]|$)"##)
 /// Hide tags: strip tag lines
-public let reHideTags = try! NSRegularExpression(pattern: #"(\n)[ \t]*(\#[^\s#].*)"#)
+public let reHideTags = try! NSRegularExpression(pattern: ##"(\n)[ \t]*(\#[^\s#].*)"##)
 
 // MARK: - Markdown Structure
 

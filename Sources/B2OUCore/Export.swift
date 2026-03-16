@@ -90,7 +90,7 @@ public func yamlEscape(_ value: String) -> String {
         || value != value.trimmingCharacters(in: .whitespaces)
         || "-?:!".contains(value.first!)
     if needsQuoting {
-        var escaped = value
+        let escaped = value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\n", with: "\\n")
@@ -200,8 +200,6 @@ public func cleanupStaleNotes(exportPath: URL, expectedPaths: Set<URL>, onDelete
         includingPropertiesForKeys: [.isDirectoryKey],
         options: []
     ) else { return 0 }
-
-    var skipURLs = Set<URL>()
 
     while let fileURL = enumerator.nextObject() as? URL {
         let isDir = (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false

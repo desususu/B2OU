@@ -421,7 +421,7 @@ private func relativePath(from base: URL, to target: URL) -> String? {
     }
 
     let ups = baseParts.count - common
-    var parts = Array(repeating: "..", count: ups) + Array(targetParts[common...])
+    let parts = Array(repeating: "..", count: ups) + Array(targetParts[common...])
     if parts.isEmpty { return "." }
     return parts.joined(separator: "/")
 }
