@@ -646,7 +646,7 @@ class ExportWatcher {
 
     func exportNow() {
         Thread.detachNewThread { [weak self] in
-            autoreleasepool { self?.doExport() }
+            autoreleasepool { _ = self?.doExport() }
         }
     }
 
