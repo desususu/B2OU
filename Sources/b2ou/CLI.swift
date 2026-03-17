@@ -332,7 +332,7 @@ private func runExport(_ cfg: ExportConfig) -> Int {
 
     let configs: [ExportConfig]
     do { configs = try cfg.splitExportConfigs() }
-    catch { printErr("Error: \(error.localizedDescription)"); return }
+    catch { printErr("Error: \(error.localizedDescription)"); return 0 }
 
     for sub in configs {
         try? FileManager.default.createDirectory(at: sub.exportPath, withIntermediateDirectories: true)
