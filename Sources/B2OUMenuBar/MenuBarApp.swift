@@ -33,6 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var activeProfileName: String?
     private var watcher: ExportWatcher?
     private var isPaused = false
+    private var statusTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = initLanguage()
@@ -45,6 +46,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if self?.config == nil {
                 self?.runSetupWizard()
             }
+        }
+
+        // Periodically refresh the "Last export: X min ago" text
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.updateStatus()
         }
     }
 
@@ -405,6 +411,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func onQuit() {
+        statusTimer?.invalidate()
         watcher?.stop()
         NSApp.terminate(nil)
     }
