@@ -142,7 +142,7 @@ public func openReadonly(dbPath: URL) throws -> SQLiteConnection {
     try SQLiteConnection(path: dbPath.path, readOnly: true)
 }
 
-public func copyAndOpen(dbPath: URL) -> (SQLiteConnection, URL?) {
+public func copyAndOpen(dbPath: URL) throws -> (SQLiteConnection, URL?) {
     let tmpDir = FileManager.default.temporaryDirectory
     let tmpPath = tmpDir.appendingPathComponent("b2ou_export_\(UUID().uuidString).sqlite")
 
@@ -157,12 +157,9 @@ public func copyAndOpen(dbPath: URL) -> (SQLiteConnection, URL?) {
         return (conn, tmpPath)
     } catch {
         // Fall back to reading live DB
-        if let conn = try? SQLiteConnection(path: dbPath.path, readOnly: true) {
-            try? FileManager.default.removeItem(at: tmpPath)
-            return (conn, nil)
-        }
-        // This shouldn't happen normally
-        fatalError("Cannot open Bear database: \(error)")
+        try? FileManager.default.removeItem(at: tmpPath)
+        let conn = try SQLiteConnection(path: dbPath.path, readOnly: true)
+        return (conn, nil)
     }
 }
 

@@ -138,7 +138,13 @@ public func writeNoteFile(filepath: URL, content: String, modifiedUnix: Double, 
     let tmp = filepath.deletingLastPathComponent().appendingPathComponent(".\(filepath.lastPathComponent).tmp")
     do {
         try content.write(to: tmp, atomically: false, encoding: .utf8)
-        _ = try? fm.moveItem(at: tmp, to: filepath)
+        // Set restrictive permissions on note content before moving into place
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
+        if fm.fileExists(atPath: filepath.path) {
+            _ = try fm.replaceItemAt(filepath, withItemAt: tmp)
+        } else {
+            try fm.moveItem(at: tmp, to: filepath)
+        }
     } catch {
         try? fm.removeItem(at: tmp)
     }
@@ -441,7 +447,7 @@ private func acquireLock(exportPath: URL) -> Int32? {
     let fm = FileManager.default
     try? fm.createDirectory(at: exportPath, withIntermediateDirectories: true)
     let lockPath = exportPath.appendingPathComponent(".b2ou.lock")
-    let fd = open(lockPath.path, O_WRONLY | O_CREAT, 0o644)
+    let fd = open(lockPath.path, O_WRONLY | O_CREAT, 0o600)
     guard fd >= 0 else { return nil }
     guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
         close(fd)
@@ -469,7 +475,13 @@ public func exportNotes(config: ExportConfig) -> ExportResult {
     }
     defer { releaseLock(lockFd) }
 
-    let (conn, tmpPath) = copyAndOpen(dbPath: config.bearDB)
+    let conn: SQLiteConnection
+    let tmpPath: URL?
+    do {
+        (conn, tmpPath) = try copyAndOpen(dbPath: config.bearDB)
+    } catch {
+        return ExportResult(noteCount: 0, expectedPaths: [], changedCount: -1)
+    }
     defer {
         if let tmpPath {
             try? FileManager.default.removeItem(at: tmpPath)

@@ -573,7 +573,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         langZhItem.title = t("lang.zh")
         quitItem.title = t("menu.quit")
         updateStatus()
-        reloadProfiles()
+
+        // Rebuild profile submenu labels without restarting the watcher
+        let submenu = NSMenu()
+        if profiles.isEmpty {
+            let setupItem = NSMenuItem(title: t("menu.setup"), action: #selector(onSetup), keyEquivalent: "")
+            setupItem.target = self
+            submenu.addItem(setupItem)
+        } else {
+            for name in profiles.keys.sorted() {
+                let item = NSMenuItem(title: name, action: #selector(onSelectProfile(_:)), keyEquivalent: "")
+                item.target = self
+                item.state = name == activeProfileName ? .on : .off
+                submenu.addItem(item)
+            }
+            submenu.addItem(.separator())
+            let reloadItem = NSMenuItem(title: t("menu.reload"), action: #selector(onReloadProfiles), keyEquivalent: "")
+            reloadItem.target = self
+            submenu.addItem(reloadItem)
+        }
+        profileMenu.submenu = submenu
     }
 }
 
@@ -582,16 +601,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 class ExportWatcher {
     private let config: ExportConfig
     private let onUpdate: ((Int, String?) -> Void)?
-    private var running = false
-    var paused = false
+    private let lock = NSLock()
+    private var _running = false
+    private var _paused = false
     private var thread: Thread?
     private var _lastExportTime: Date?
     private var _noteCount = 0
     private var _lastBackupTime: Date?
 
-    var lastExportTime: Date? { _lastExportTime }
-    var noteCount: Int { _noteCount }
-    var lastBackupTime: Date? { _lastBackupTime }
+    var lastExportTime: Date? { lock.lock(); defer { lock.unlock() }; return _lastExportTime }
+    var noteCount: Int { lock.lock(); defer { lock.unlock() }; return _noteCount }
+    var lastBackupTime: Date? { lock.lock(); defer { lock.unlock() }; return _lastBackupTime }
+
+    var paused: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _paused }
+        set { lock.lock(); _paused = newValue; lock.unlock() }
+    }
+
+    private var running: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _running }
+        set { lock.lock(); _running = newValue; lock.unlock() }
+    }
 
     init(config: ExportConfig, onUpdate: ((Int, String?) -> Void)? = nil) {
         self.config = config
@@ -614,7 +644,7 @@ class ExportWatcher {
     private func loop() {
         var lastSignature: (Double, Int) = (0.0, -1)
         var lastExportUnix: Double = 0
-        let consecutiveFailures = 0
+        var consecutiveFailures = 0
         var idleSleep = 2.0
         let idleMax = 30.0
 
@@ -647,11 +677,13 @@ class ExportWatcher {
                     }
                 }
 
-                doExport()
+                if doExport() {
+                    consecutiveFailures = 0
+                } else {
+                    consecutiveFailures += 1
+                }
                 lastSignature = bearDBSignature(dbPath: config.bearDB)
                 lastExportUnix = Date().timeIntervalSince1970
-            } else {
-                Thread.sleep(forTimeInterval: 2.0)
             }
             Thread.sleep(forTimeInterval: 2.0)
         }
@@ -683,13 +715,15 @@ class ExportWatcher {
             try conn.backupTo(destPath.path)
             // Set restrictive permissions on backup file
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destPath.path)
+            lock.lock()
             _lastBackupTime = Date()
+            lock.unlock()
             rotateBackups(in: backupDir)
         } catch {
             // Backup failed silently — will retry next interval
         }
 
-        onUpdate?(_noteCount, nil)
+        onUpdate?(noteCount, nil)
     }
 
     private func rotateBackups(in dir: URL) {
@@ -710,7 +744,8 @@ class ExportWatcher {
         }
     }
 
-    private func doExport() {
+    @discardableResult
+    private func doExport() -> Bool {
         var errorMsg: String? = nil
         do {
             let configs = try config.splitExportConfigs()
@@ -733,13 +768,16 @@ class ExportWatcher {
                 }
                 totalCount = max(totalCount, result.noteCount)
             }
+            lock.lock()
             _noteCount = totalCount
             _lastExportTime = Date()
+            lock.unlock()
         } catch {
             errorMsg = error.localizedDescription
         }
 
-        onUpdate?(_noteCount, errorMsg)
+        onUpdate?(noteCount, errorMsg)
+        return errorMsg == nil
     }
 }
 

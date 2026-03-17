@@ -324,7 +324,8 @@ struct Clean: ParsableCommand {
 
 // MARK: - Export Runner
 
-private func runExport(_ cfg: ExportConfig) {
+@discardableResult
+private func runExport(_ cfg: ExportConfig) -> Int {
     var totalCount = 0
     var totalChanged = 0
     var paths: [String] = []
@@ -368,6 +369,7 @@ private func runExport(_ cfg: ExportConfig) {
 
     let dest = paths.joined(separator: ", ")
     log("\(totalCount) notes exported (\(totalChanged) changed) to: \(dest)")
+    return totalCount
 }
 
 // MARK: - Watch Loop
@@ -386,7 +388,7 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
     var lastSignature: (Double, Int) = (0.0, -1)
     var lastExportTime: Double = 0
     var consecutiveFailures = 0
-    let noteCount = 0
+    var noteCount = 0
     var idleSleep = 2.0
     let idleMax = 30.0
 
@@ -418,7 +420,7 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
 
         writeStatus(statusFile, state: "exporting", noteCount: noteCount, exportPath: cfg.exportPath.path)
 
-        runExport(cfg)
+        noteCount = runExport(cfg)
         lastExportTime = Date().timeIntervalSince1970
         consecutiveFailures = 0
         writeStatus(statusFile, state: "idle", noteCount: noteCount, exportPath: cfg.exportPath.path)

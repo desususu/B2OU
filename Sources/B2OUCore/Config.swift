@@ -98,7 +98,7 @@ public struct ExportConfig: Sendable {
     // MARK: - Derived Flags
 
     public var exportAsTextbundles: Bool { exportFormat == "tb" }
-    public var exportAsHybrids: Bool { exportFormat == "tb" }
+    public var exportAsHybrids: Bool { exportFormat == "both" }
     public var exportImageRepository: Bool { exportFormat == "md" }
 
     public var exportTsFile: URL {

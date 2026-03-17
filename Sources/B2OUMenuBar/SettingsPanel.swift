@@ -527,13 +527,19 @@ class SettingsPanelController: NSObject {
             return
         }
 
-        // Validate TB folder for "both" mode
-        if v.exportFormat == "both" && v.exportPathTB.isEmpty {
+        // Validate TB folder
+        if tbOn == true && v.exportPathTB.isEmpty {
             let alert = NSAlert()
             alert.messageText = t("settings.title")
             alert.informativeText = t("settings.folder_tb_missing")
             alert.runModal()
             return
+        }
+
+        // For TB-only mode, use the TB folder as the primary export path
+        if v.exportFormat == "tb" {
+            v.exportPath = v.exportPathTB
+            v.exportPathTB = ""
         }
 
         // Validate TB != MD for "both" mode
