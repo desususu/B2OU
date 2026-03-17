@@ -393,40 +393,45 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
     let idleMax = 30.0
 
     while !shutdownFlag {
-        let sig = bearDBSignature(dbPath: cfg.bearDB)
-        if sig == lastSignature || sig.noteCount < 0 {
-            Thread.sleep(forTimeInterval: idleSleep)
-            idleSleep = min(idleMax, idleSleep * 1.5)
-            continue
-        }
-        idleSleep = 2.0
-
-        let interval = minInterval * pow(2.0, Double(min(consecutiveFailures, 4)))
-        let elapsed = Date().timeIntervalSince1970 - lastExportTime
-        if lastExportTime > 0 && elapsed < interval {
-            Thread.sleep(forTimeInterval: min(2.0, interval - elapsed))
-            continue
-        }
-
-        if lastSignature.1 >= 0 {
-            log("Bear database changed, waiting for writes to settle...")
-            var waited = 0.0
-            while !shutdownFlag && waited < debounce * 3 {
-                if dbIsQuiet(dbPath: cfg.bearDB, quietSeconds: debounce) { break }
-                Thread.sleep(forTimeInterval: 1.0)
-                waited += 1.0
+        let shouldSleep: Bool = autoreleasepool {
+            let sig = bearDBSignature(dbPath: cfg.bearDB)
+            if sig == lastSignature || sig.noteCount < 0 {
+                Thread.sleep(forTimeInterval: idleSleep)
+                idleSleep = min(idleMax, idleSleep * 1.5)
+                return false
             }
+            idleSleep = 2.0
+
+            let interval = minInterval * pow(2.0, Double(min(consecutiveFailures, 4)))
+            let elapsed = Date().timeIntervalSince1970 - lastExportTime
+            if lastExportTime > 0 && elapsed < interval {
+                Thread.sleep(forTimeInterval: min(2.0, interval - elapsed))
+                return false
+            }
+
+            if lastSignature.1 >= 0 {
+                log("Bear database changed, waiting for writes to settle...")
+                var waited = 0.0
+                while !shutdownFlag && waited < debounce * 3 {
+                    if dbIsQuiet(dbPath: cfg.bearDB, quietSeconds: debounce) { break }
+                    Thread.sleep(forTimeInterval: 1.0)
+                    waited += 1.0
+                }
+            }
+
+            writeStatus(statusFile, state: "exporting", noteCount: noteCount, exportPath: cfg.exportPath.path)
+
+            noteCount = runExport(cfg)
+            lastExportTime = Date().timeIntervalSince1970
+            consecutiveFailures = 0
+            writeStatus(statusFile, state: "idle", noteCount: noteCount, exportPath: cfg.exportPath.path)
+
+            lastSignature = bearDBSignature(dbPath: cfg.bearDB)
+            return true
         }
-
-        writeStatus(statusFile, state: "exporting", noteCount: noteCount, exportPath: cfg.exportPath.path)
-
-        noteCount = runExport(cfg)
-        lastExportTime = Date().timeIntervalSince1970
-        consecutiveFailures = 0
-        writeStatus(statusFile, state: "idle", noteCount: noteCount, exportPath: cfg.exportPath.path)
-
-        lastSignature = bearDBSignature(dbPath: cfg.bearDB)
-        Thread.sleep(forTimeInterval: 2.0)
+        if shouldSleep {
+            Thread.sleep(forTimeInterval: 2.0)
+        }
     }
 
     writeStatus(statusFile, state: "stopped", noteCount: noteCount, exportPath: cfg.exportPath.path)

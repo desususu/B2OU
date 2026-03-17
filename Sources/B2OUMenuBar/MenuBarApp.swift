@@ -645,7 +645,9 @@ class ExportWatcher {
     func stop() { running = false }
 
     func exportNow() {
-        Thread.detachNewThread { [weak self] in self?.doExport() }
+        Thread.detachNewThread { [weak self] in
+            autoreleasepool { self?.doExport() }
+        }
     }
 
     private func loop() {
@@ -656,43 +658,48 @@ class ExportWatcher {
         let idleMax = 30.0
 
         while running {
-            // Check scheduled backup (runs even when paused to maintain schedule)
-            checkScheduledBackup()
+            let shouldSleep: Bool = autoreleasepool {
+                // Check scheduled backup (runs even when paused to maintain schedule)
+                checkScheduledBackup()
 
-            if !paused {
-                let sig = bearDBSignature(dbPath: config.bearDB)
-                if sig == lastSignature || sig.noteCount < 0 {
-                    Thread.sleep(forTimeInterval: idleSleep)
-                    idleSleep = min(idleMax, idleSleep * 1.5)
-                    continue
-                }
-                idleSleep = 2.0
-
-                let interval = 10.0 * pow(2.0, Double(min(consecutiveFailures, 4)))
-                let elapsed = Date().timeIntervalSince1970 - lastExportUnix
-                if lastExportUnix > 0 && elapsed < interval {
-                    Thread.sleep(forTimeInterval: min(2.0, interval - elapsed))
-                    continue
-                }
-
-                if lastSignature.1 >= 0 {
-                    var waited = 0.0
-                    while running && waited < 9 {
-                        if dbIsQuiet(dbPath: config.bearDB, quietSeconds: 3.0) { break }
-                        Thread.sleep(forTimeInterval: 1.0)
-                        waited += 1.0
+                if !paused {
+                    let sig = bearDBSignature(dbPath: config.bearDB)
+                    if sig == lastSignature || sig.noteCount < 0 {
+                        Thread.sleep(forTimeInterval: idleSleep)
+                        idleSleep = min(idleMax, idleSleep * 1.5)
+                        return false
                     }
-                }
+                    idleSleep = 2.0
 
-                if doExport() {
-                    consecutiveFailures = 0
-                } else {
-                    consecutiveFailures += 1
+                    let interval = 10.0 * pow(2.0, Double(min(consecutiveFailures, 4)))
+                    let elapsed = Date().timeIntervalSince1970 - lastExportUnix
+                    if lastExportUnix > 0 && elapsed < interval {
+                        Thread.sleep(forTimeInterval: min(2.0, interval - elapsed))
+                        return false
+                    }
+
+                    if lastSignature.1 >= 0 {
+                        var waited = 0.0
+                        while running && waited < 9 {
+                            if dbIsQuiet(dbPath: config.bearDB, quietSeconds: 3.0) { break }
+                            Thread.sleep(forTimeInterval: 1.0)
+                            waited += 1.0
+                        }
+                    }
+
+                    if doExport() {
+                        consecutiveFailures = 0
+                    } else {
+                        consecutiveFailures += 1
+                    }
+                    lastSignature = bearDBSignature(dbPath: config.bearDB)
+                    lastExportUnix = Date().timeIntervalSince1970
                 }
-                lastSignature = bearDBSignature(dbPath: config.bearDB)
-                lastExportUnix = Date().timeIntervalSince1970
+                return true
             }
-            Thread.sleep(forTimeInterval: 2.0)
+            if shouldSleep {
+                Thread.sleep(forTimeInterval: 2.0)
+            }
         }
     }
 
