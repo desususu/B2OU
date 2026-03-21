@@ -1,9 +1,8 @@
 // NotePreviewWindow.swift — Note browser with Markdown preview, typography controls,
 // day/night mode, split-screen source view, and sort options.
 //
-// Provides a three-pane layout: searchable/sortable note list on the left, and a
-// content area on the right that can show rendered preview, raw source, or both
-// side-by-side. Fonts are detected from the system so all installed fonts appear.
+// Apple-design-inspired: vibrancy sidebar, unified toolbar, full-size content view
+// with titlebar blending, refined typography, and polished layout.
 
 import Cocoa
 import WebKit
@@ -11,11 +10,11 @@ import B2OUCore
 
 // MARK: - Layout Constants
 
-private let previewWidth:  CGFloat = 1020
-private let previewHeight: CGFloat = 660
-private let sidebarWidth:  CGFloat = 260
-private let toolbarH:      CGFloat = 38
-private let bottomBarH:    CGFloat = 32
+private let previewWidth:  CGFloat = 1060
+private let previewHeight: CGFloat = 700
+private let sidebarWidth:  CGFloat = 280
+private let toolbarH:      CGFloat = 40
+private let bottomBarH:    CGFloat = 34
 
 // MARK: - Sort Mode
 
@@ -172,13 +171,16 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
     // MARK: - Build Window
 
     private func buildWindow() {
-        let style: NSWindow.StyleMask = [.titled, .closable, .resizable, .miniaturizable]
+        let style: NSWindow.StyleMask = [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView]
         let rect = NSRect(x: 0, y: 0, width: previewWidth, height: previewHeight)
         window = NSWindow(contentRect: rect, styleMask: style, backing: .buffered, defer: false)
         window?.title = t("preview.title")
+        window?.titlebarAppearsTransparent = true
+        window?.titleVisibility = .visible
         window?.center()
         window?.isReleasedWhenClosed = false
-        window?.minSize = NSSize(width: 700, height: 420)
+        window?.minSize = NSSize(width: 740, height: 460)
+        window?.backgroundColor = .windowBackgroundColor
 
         guard let content = window?.contentView else { return }
         content.wantsLayer = true
@@ -186,104 +188,22 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         let ch = content.frame.height
         let cw = content.frame.width
 
-        // ── Toolbar ─────────────────────────────────────────────
+        // ── Sidebar with Vibrancy ───────────────────────────────
 
-        let toolbar = NSView(frame: NSRect(x: 0, y: ch - toolbarH, width: cw, height: toolbarH))
-        toolbar.autoresizingMask = [.width, .minYMargin]
-        toolbar.wantsLayer = true
-        toolbar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        content.addSubview(toolbar)
-
-        // Horizontal divider under toolbar
-        let toolDiv = NSView(frame: NSRect(x: 0, y: 0, width: cw, height: 1))
-        toolDiv.wantsLayer = true
-        toolDiv.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        toolDiv.autoresizingMask = [.width]
-        toolbar.addSubview(toolDiv)
-
-        var tx: CGFloat = 12
-
-        // Font popup
-        let fontLabel = NSTextField(labelWithString: t("preview.font"))
-        fontLabel.frame = NSRect(x: tx, y: 10, width: 30, height: 18)
-        fontLabel.font = NSFont.systemFont(ofSize: 11)
-        toolbar.addSubview(fontLabel)
-        tx += 32
-
-        let fontPopup = NSPopUpButton(frame: NSRect(x: tx, y: 6, width: 140, height: 24), pullsDown: false)
-        fontPopup.font = NSFont.systemFont(ofSize: 11)
-        for opt in fontOptions { fontPopup.addItem(withTitle: opt.label) }
-        fontPopup.target = self
-        fontPopup.action = #selector(onFontChanged(_:))
-        toolbar.addSubview(fontPopup)
-        tx += 146
-
-        // Size popup
-        let sizeLabel = NSTextField(labelWithString: t("preview.size"))
-        sizeLabel.frame = NSRect(x: tx, y: 10, width: 26, height: 18)
-        sizeLabel.font = NSFont.systemFont(ofSize: 11)
-        toolbar.addSubview(sizeLabel)
-        tx += 28
-
-        let sizePopup = NSPopUpButton(frame: NSRect(x: tx, y: 6, width: 56, height: 24), pullsDown: false)
-        sizePopup.font = NSFont.systemFont(ofSize: 11)
-        for s in sizeOptions { sizePopup.addItem(withTitle: "\(Int(s))") }
-        if let idx = sizeOptions.firstIndex(of: fontSize) { sizePopup.selectItem(at: idx) }
-        sizePopup.target = self
-        sizePopup.action = #selector(onSizeChanged(_:))
-        toolbar.addSubview(sizePopup)
-        tx += 60
-
-        // Spacing popup
-        let spacingLabel = NSTextField(labelWithString: t("preview.spacing"))
-        spacingLabel.frame = NSRect(x: tx, y: 10, width: 40, height: 18)
-        spacingLabel.font = NSFont.systemFont(ofSize: 11)
-        toolbar.addSubview(spacingLabel)
-        tx += 42
-
-        let spacingPopup = NSPopUpButton(frame: NSRect(x: tx, y: 6, width: 56, height: 24), pullsDown: false)
-        spacingPopup.font = NSFont.systemFont(ofSize: 11)
-        for s in spacingOptions { spacingPopup.addItem(withTitle: String(format: "%.1f", s)) }
-        if let idx = spacingOptions.firstIndex(of: lineSpacing) { spacingPopup.selectItem(at: idx) }
-        spacingPopup.target = self
-        spacingPopup.action = #selector(onSpacingChanged(_:))
-        toolbar.addSubview(spacingPopup)
-        tx += 62
-
-        // Day/Night toggle
-        let themeControl = NSSegmentedControl(labels: [t("preview.day_mode"), t("preview.night_mode")],
-                                             trackingMode: .selectOne,
-                                             target: self,
-                                             action: #selector(onThemeChanged(_:)))
-        themeControl.frame = NSRect(x: tx + 8, y: 7, width: 110, height: 22)
-        themeControl.font = NSFont.systemFont(ofSize: 11)
-        themeControl.selectedSegment = 0
-        toolbar.addSubview(themeControl)
-        tx += 126
-
-        // View mode: Preview / Source / Split
-        let viewControl = NSSegmentedControl(
-            labels: [t("preview.mode_preview"), t("preview.mode_source"), t("preview.mode_split")],
-            trackingMode: .selectOne,
-            target: self,
-            action: #selector(onViewModeChanged(_:)))
-        viewControl.frame = NSRect(x: tx + 8, y: 7, width: 160, height: 22)
-        viewControl.font = NSFont.systemFont(ofSize: 11)
-        viewControl.selectedSegment = 0
-        toolbar.addSubview(viewControl)
-
-        // ── Sidebar ─────────────────────────────────────────────
-
-        let sideY = bottomBarH
+        let sideY: CGFloat = bottomBarH
         let sideH = ch - toolbarH - bottomBarH
 
-        let sidebarView = NSView(frame: NSRect(x: 0, y: sideY, width: sidebarWidth, height: sideH))
-        sidebarView.autoresizingMask = [.height]
-        content.addSubview(sidebarView)
+        let sidebarEffect = NSVisualEffectView(frame: NSRect(x: 0, y: sideY, width: sidebarWidth, height: sideH))
+        sidebarEffect.autoresizingMask = [.height]
+        sidebarEffect.blendingMode = .behindWindow
+        sidebarEffect.material = .sidebar
+        sidebarEffect.state = .active
+        content.addSubview(sidebarEffect)
 
         // Sort popup
-        var sy = sideH - 30
-        sortPopup = NSPopUpButton(frame: NSRect(x: 8, y: sy, width: sidebarWidth - 16, height: 22), pullsDown: false)
+        var sy = sideH - 34
+        sortPopup = NSPopUpButton(frame: NSRect(x: 12, y: sy, width: sidebarWidth - 24, height: 24), pullsDown: false)
+        sortPopup?.controlSize = .small
         sortPopup?.font = NSFont.systemFont(ofSize: 11)
         sortPopup?.addItems(withTitles: [
             t("preview.sort_title"),
@@ -295,29 +215,33 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         sortPopup?.target = self
         sortPopup?.action = #selector(onSortChanged(_:))
         sortPopup?.autoresizingMask = [.minYMargin, .width]
-        sidebarView.addSubview(sortPopup!)
+        sidebarEffect.addSubview(sortPopup!)
 
         // Search field
-        sy -= 28
-        searchField = NSSearchField(frame: NSRect(x: 8, y: sy, width: sidebarWidth - 16, height: 24))
+        sy -= 30
+        searchField = NSSearchField(frame: NSRect(x: 12, y: sy, width: sidebarWidth - 24, height: 26))
+        searchField?.controlSize = .small
         searchField?.font = NSFont.systemFont(ofSize: 12)
         searchField?.placeholderString = t("preview.search")
         searchField?.target = self
         searchField?.action = #selector(onSearch(_:))
         searchField?.autoresizingMask = [.minYMargin, .width]
-        sidebarView.addSubview(searchField!)
+        sidebarEffect.addSubview(searchField!)
 
         // Table view in scroll view
-        let tableScrollH = sy - 4
+        let tableScrollH = sy - 6
         let tableScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: sidebarWidth, height: tableScrollH))
         tableScroll.autoresizingMask = [.height, .width]
         tableScroll.hasVerticalScroller = true
         tableScroll.drawsBackground = false
+        tableScroll.scrollerStyle = .overlay
 
         tableView = NSTableView()
         tableView?.headerView = nil
-        tableView?.rowHeight = 40
-        tableView?.intercellSpacing = NSSize(width: 0, height: 1)
+        tableView?.rowHeight = 48
+        tableView?.intercellSpacing = NSSize(width: 0, height: 0)
+        tableView?.selectionHighlightStyle = .regular
+        tableView?.backgroundColor = .clear
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("title"))
         col.width = sidebarWidth - 4
         tableView?.addTableColumn(col)
@@ -325,7 +249,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         tableView?.delegate = self
         tableScroll.documentView = tableView
 
-        sidebarView.addSubview(tableScroll)
+        sidebarEffect.addSubview(tableScroll)
 
         // Vertical divider
         let divider = NSView(frame: NSRect(x: sidebarWidth, y: sideY, width: 1, height: sideH))
@@ -333,6 +257,101 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         divider.layer?.backgroundColor = NSColor.separatorColor.cgColor
         divider.autoresizingMask = [.height]
         content.addSubview(divider)
+
+        // ── Toolbar ─────────────────────────────────────────────
+
+        let toolbar = NSVisualEffectView(frame: NSRect(x: 0, y: ch - toolbarH, width: cw, height: toolbarH))
+        toolbar.autoresizingMask = [.width, .minYMargin]
+        toolbar.blendingMode = .behindWindow
+        toolbar.material = .titlebar
+        toolbar.state = .active
+        content.addSubview(toolbar)
+
+        // Horizontal divider under toolbar
+        let toolDiv = NSView(frame: NSRect(x: 0, y: 0, width: cw, height: 1))
+        toolDiv.wantsLayer = true
+        toolDiv.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        toolDiv.autoresizingMask = [.width]
+        toolbar.addSubview(toolDiv)
+
+        var tx: CGFloat = sidebarWidth + 16
+
+        // Font popup
+        let fontLabel = NSTextField(labelWithString: t("preview.font"))
+        fontLabel.frame = NSRect(x: tx, y: 12, width: 30, height: 16)
+        fontLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+        fontLabel.textColor = .secondaryLabelColor
+        toolbar.addSubview(fontLabel)
+        tx += 30
+
+        let fontPopup = NSPopUpButton(frame: NSRect(x: tx, y: 8, width: 130, height: 22), pullsDown: false)
+        fontPopup.controlSize = .small
+        fontPopup.font = NSFont.systemFont(ofSize: 11)
+        for opt in fontOptions { fontPopup.addItem(withTitle: opt.label) }
+        fontPopup.target = self
+        fontPopup.action = #selector(onFontChanged(_:))
+        toolbar.addSubview(fontPopup)
+        tx += 138
+
+        // Size popup
+        let sizeLabel = NSTextField(labelWithString: t("preview.size"))
+        sizeLabel.frame = NSRect(x: tx, y: 12, width: 26, height: 16)
+        sizeLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+        sizeLabel.textColor = .secondaryLabelColor
+        toolbar.addSubview(sizeLabel)
+        tx += 26
+
+        let sizePopup = NSPopUpButton(frame: NSRect(x: tx, y: 8, width: 52, height: 22), pullsDown: false)
+        sizePopup.controlSize = .small
+        sizePopup.font = NSFont.systemFont(ofSize: 11)
+        for s in sizeOptions { sizePopup.addItem(withTitle: "\(Int(s))") }
+        if let idx = sizeOptions.firstIndex(of: fontSize) { sizePopup.selectItem(at: idx) }
+        sizePopup.target = self
+        sizePopup.action = #selector(onSizeChanged(_:))
+        toolbar.addSubview(sizePopup)
+        tx += 58
+
+        // Spacing popup
+        let spacingLabel = NSTextField(labelWithString: t("preview.spacing"))
+        spacingLabel.frame = NSRect(x: tx, y: 12, width: 42, height: 16)
+        spacingLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+        spacingLabel.textColor = .secondaryLabelColor
+        toolbar.addSubview(spacingLabel)
+        tx += 42
+
+        let spacingPopup = NSPopUpButton(frame: NSRect(x: tx, y: 8, width: 52, height: 22), pullsDown: false)
+        spacingPopup.controlSize = .small
+        spacingPopup.font = NSFont.systemFont(ofSize: 11)
+        for s in spacingOptions { spacingPopup.addItem(withTitle: String(format: "%.1f", s)) }
+        if let idx = spacingOptions.firstIndex(of: lineSpacing) { spacingPopup.selectItem(at: idx) }
+        spacingPopup.target = self
+        spacingPopup.action = #selector(onSpacingChanged(_:))
+        toolbar.addSubview(spacingPopup)
+        tx += 60
+
+        // Day/Night toggle
+        let themeControl = NSSegmentedControl(labels: [t("preview.day_mode"), t("preview.night_mode")],
+                                             trackingMode: .selectOne,
+                                             target: self,
+                                             action: #selector(onThemeChanged(_:)))
+        themeControl.frame = NSRect(x: tx + 8, y: 9, width: 100, height: 22)
+        themeControl.controlSize = .small
+        themeControl.font = NSFont.systemFont(ofSize: 10)
+        themeControl.selectedSegment = 0
+        toolbar.addSubview(themeControl)
+        tx += 116
+
+        // View mode: Preview / Source / Split
+        let viewControl = NSSegmentedControl(
+            labels: [t("preview.mode_preview"), t("preview.mode_source"), t("preview.mode_split")],
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(onViewModeChanged(_:)))
+        viewControl.frame = NSRect(x: tx + 8, y: 9, width: 150, height: 22)
+        viewControl.controlSize = .small
+        viewControl.font = NSFont.systemFont(ofSize: 10)
+        viewControl.selectedSegment = 0
+        toolbar.addSubview(viewControl)
 
         // ── Content Container ───────────────────────────────────
 
@@ -344,18 +363,21 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
         // WebView
         webView = WKWebView(frame: contentContainer!.bounds)
+        webView?.autoresizingMask = [.width, .height]
         contentContainer?.addSubview(webView!)
 
         // Source text view
         sourceScrollView = NSScrollView(frame: contentContainer!.bounds)
+        sourceScrollView?.autoresizingMask = [.width, .height]
         sourceScrollView?.hasVerticalScroller = true
         sourceScrollView?.drawsBackground = true
+        sourceScrollView?.scrollerStyle = .overlay
 
         sourceTextView = NSTextView(frame: contentContainer!.bounds)
         sourceTextView?.isEditable = false
         sourceTextView?.isSelectable = true
         sourceTextView?.font = NSFont(name: "Menlo", size: 13) ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        sourceTextView?.textContainerInset = NSSize(width: 16, height: 16)
+        sourceTextView?.textContainerInset = NSSize(width: 20, height: 20)
         sourceTextView?.isAutomaticQuoteSubstitutionEnabled = false
         sourceTextView?.isAutomaticDashSubstitutionEnabled = false
         sourceTextView?.backgroundColor = .textBackgroundColor
@@ -377,10 +399,11 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
         // ── Bottom Bar ──────────────────────────────────────────
 
-        let bottomBar = NSView(frame: NSRect(x: 0, y: 0, width: cw, height: bottomBarH))
+        let bottomBar = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: cw, height: bottomBarH))
         bottomBar.autoresizingMask = [.width]
-        bottomBar.wantsLayer = true
-        bottomBar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        bottomBar.blendingMode = .behindWindow
+        bottomBar.material = .titlebar
+        bottomBar.state = .active
         content.addSubview(bottomBar)
 
         let hDiv = NSView(frame: NSRect(x: 0, y: bottomBarH - 1, width: cw, height: 1))
@@ -390,24 +413,26 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         bottomBar.addSubview(hDiv)
 
         wordCountLabel = NSTextField(labelWithString: "")
-        wordCountLabel?.frame = NSRect(x: 12, y: 6, width: 300, height: 18)
-        wordCountLabel?.font = NSFont.systemFont(ofSize: 11)
-        wordCountLabel?.textColor = .secondaryLabelColor
+        wordCountLabel?.frame = NSRect(x: 16, y: 8, width: 300, height: 16)
+        wordCountLabel?.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        wordCountLabel?.textColor = .tertiaryLabelColor
         bottomBar.addSubview(wordCountLabel!)
 
-        let openEditorBtn = NSButton(frame: NSRect(x: cw - 260, y: 3, width: 120, height: 24))
+        let openEditorBtn = NSButton(frame: NSRect(x: cw - 260, y: 5, width: 116, height: 24))
         openEditorBtn.title = t("preview.open_editor")
         openEditorBtn.bezelStyle = .rounded
-        openEditorBtn.font = NSFont.systemFont(ofSize: 11)
+        openEditorBtn.controlSize = .small
+        openEditorBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         openEditorBtn.target = self
         openEditorBtn.action = #selector(onOpenEditor)
         openEditorBtn.autoresizingMask = [.minXMargin]
         bottomBar.addSubview(openEditorBtn)
 
-        openBearBtn = NSButton(frame: NSRect(x: cw - 130, y: 3, width: 120, height: 24))
+        openBearBtn = NSButton(frame: NSRect(x: cw - 134, y: 5, width: 116, height: 24))
         openBearBtn?.title = t("preview.open_bear")
         openBearBtn?.bezelStyle = .rounded
-        openBearBtn?.font = NSFont.systemFont(ofSize: 11)
+        openBearBtn?.controlSize = .small
+        openBearBtn?.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         openBearBtn?.target = self
         openBearBtn?.action = #selector(onOpenBear)
         openBearBtn?.autoresizingMask = [.minXMargin]
@@ -472,9 +497,9 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
             let tf = NSTextField(labelWithString: "")
             tf.tag = 1
-            tf.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+            tf.font = NSFont.systemFont(ofSize: 13, weight: .regular)
             tf.lineBreakMode = .byTruncatingTail
-            tf.frame = NSRect(x: 8, y: 20, width: sidebarWidth - 20, height: 16)
+            tf.frame = NSRect(x: 14, y: 26, width: sidebarWidth - 28, height: 18)
             tf.autoresizingMask = [.width]
             cell.addSubview(tf)
             titleField = tf
@@ -482,9 +507,9 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
             let sf = NSTextField(labelWithString: "")
             sf.tag = 2
             sf.font = NSFont.systemFont(ofSize: 10)
-            sf.textColor = .secondaryLabelColor
+            sf.textColor = .tertiaryLabelColor
             sf.lineBreakMode = .byTruncatingTail
-            sf.frame = NSRect(x: 8, y: 4, width: sidebarWidth - 20, height: 14)
+            sf.frame = NSRect(x: 14, y: 8, width: sidebarWidth - 28, height: 14)
             sf.autoresizingMask = [.width]
             cell.addSubview(sf)
             subtitleField = sf
@@ -774,12 +799,12 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
     }
 
     private func wrapInHTML(_ body: String) -> String {
-        let bg = isDarkMode ? "#1e1e1e" : "#ffffff"
-        let fg = isDarkMode ? "#e0e0e0" : "#1d1d1f"
-        let codeBg = isDarkMode ? "#2d2d2d" : "#f5f5f5"
-        let border = isDarkMode ? "#444" : "#e0e0e0"
-        let link = isDarkMode ? "#4da6ff" : "#0066cc"
-        let quote = isDarkMode ? "#aaa" : "#666"
+        let bg = isDarkMode ? "#1c1c1e" : "#ffffff"
+        let fg = isDarkMode ? "#e5e5e7" : "#1d1d1f"
+        let codeBg = isDarkMode ? "#2c2c2e" : "#f2f2f7"
+        let border = isDarkMode ? "#38383a" : "#e5e5ea"
+        let link = isDarkMode ? "#64a8ff" : "#0071e3"
+        let quote = isDarkMode ? "#98989d" : "#86868b"
         let markBg = isDarkMode ? "#5a4a00" : "#fff3cd"
         let safeFont = cssEscape(fontFamily)
 
@@ -788,69 +813,73 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         <html>
         <head><meta charset="utf-8">
         <style>
+        * { box-sizing: border-box; }
         body {
             font-family: \(safeFont);
             font-size: \(Int(fontSize))px;
             line-height: \(String(format: "%.1f", lineSpacing));
             color: \(fg);
             background: \(bg);
-            padding: 20px 28px;
+            padding: 32px 40px;
             margin: 0;
             -webkit-font-smoothing: antialiased;
+            -webkit-text-size-adjust: 100%;
         }
         h1, h2, h3, h4, h5, h6 {
             font-weight: 600;
-            margin-top: 1.2em;
-            margin-bottom: 0.4em;
+            margin-top: 1.4em;
+            margin-bottom: 0.5em;
+            letter-spacing: -0.01em;
         }
-        h1 { font-size: 1.8em; }
-        h2 { font-size: 1.4em; border-bottom: 1px solid \(border); padding-bottom: 0.2em; }
-        h3 { font-size: 1.2em; }
-        p { margin: 0.6em 0; }
+        h1 { font-size: 1.8em; font-weight: 700; letter-spacing: -0.02em; }
+        h2 { font-size: 1.4em; border-bottom: 1px solid \(border); padding-bottom: 0.3em; }
+        h3 { font-size: 1.15em; }
+        p { margin: 0.7em 0; }
         a { color: \(link); text-decoration: none; }
         a:hover { text-decoration: underline; }
         code {
             background: \(codeBg);
-            padding: 2px 5px;
-            border-radius: 3px;
+            padding: 2px 6px;
+            border-radius: 4px;
             font-family: 'SF Mono', 'Menlo', monospace;
-            font-size: 0.88em;
+            font-size: 0.86em;
         }
         pre {
             background: \(codeBg);
-            padding: 14px;
-            border-radius: 6px;
+            padding: 16px 18px;
+            border-radius: 8px;
             overflow-x: auto;
+            line-height: 1.5;
         }
         pre code {
             background: none;
             padding: 0;
-            font-size: 0.88em;
+            font-size: 0.86em;
         }
         blockquote {
             border-left: 3px solid \(border);
-            margin: 0.8em 0;
-            padding-left: 16px;
+            margin: 1em 0;
+            padding-left: 18px;
             color: \(quote);
         }
         img {
             max-width: 100%;
-            border-radius: 6px;
-            margin: 8px 0;
+            border-radius: 8px;
+            margin: 10px 0;
         }
         hr {
             border: none;
             border-top: 1px solid \(border);
-            margin: 24px 0;
+            margin: 28px 0;
         }
         mark {
             background: \(markBg);
-            padding: 1px 3px;
-            border-radius: 2px;
+            padding: 1px 4px;
+            border-radius: 3px;
         }
-        del { opacity: 0.5; }
+        del { opacity: 0.45; }
         ul, ol { padding-left: 24px; }
-        li { margin: 4px 0; }
+        li { margin: 5px 0; }
         </style>
         </head>
         <body>\(body)</body>

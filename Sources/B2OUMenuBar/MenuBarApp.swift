@@ -412,6 +412,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Confirmation alert
         let alert = NSAlert()
+        alert.alertStyle = .informational
         alert.messageText = t("settings.applied_title")
         if v.exportFormat == "both" {
             alert.informativeText = t("settings.applied_msg_both")
@@ -421,7 +422,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             alert.informativeText = t("settings.applied_msg")
                 .replacingOccurrences(of: "{path}", with: v.exportPath)
         }
-        alert.alertStyle = .informational
         alert.runModal()
     }
 
@@ -457,10 +457,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func runSetupWizard() {
         let alert = NSAlert()
+        alert.alertStyle = .informational
         alert.messageText = t("wizard.welcome_title")
         alert.informativeText = t("wizard.welcome_msg")
         alert.addButton(withTitle: t("wizard.quick"))
         alert.addButton(withTitle: t("wizard.advanced"))
+        if let appIcon = NSImage(named: NSImage.applicationIconName) {
+            alert.icon = appIcon
+        }
         NSApp.activate(ignoringOtherApps: true)
 
         let response = alert.runModal()
@@ -473,6 +477,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func wizardBeginner() {
         let alert = NSAlert()
+        alert.alertStyle = .informational
         alert.messageText = t("wizard.quick_title")
         alert.informativeText = t("wizard.quick_msg")
         alert.addButton(withTitle: t("wizard.choose_folder"))
@@ -480,6 +485,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard let path = pickFolder(prompt: t("wizard.pick_prompt")) else {
             let cancel = NSAlert()
+            cancel.alertStyle = .warning
             cancel.messageText = t("wizard.cancelled_title")
             cancel.informativeText = t("wizard.cancelled_msg")
             cancel.runModal()
@@ -493,15 +499,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         reloadProfiles()
 
         let done = NSAlert()
-        done.messageText = "B2OU — " + t("wizard.ready")
-        done.informativeText = t("wizard.ready_msg").replacingOccurrences(of: "{path}", with: path)
         done.alertStyle = .informational
+        done.messageText = "B2OU \u{2014} " + t("wizard.ready")
+        done.informativeText = t("wizard.ready_msg").replacingOccurrences(of: "{path}", with: path)
         done.runModal()
     }
 
     private func wizardAdvanced() {
         guard let path = pickFolder(prompt: t("wizard.pick_advanced")) else {
             let cancel = NSAlert()
+            cancel.alertStyle = .warning
             cancel.messageText = t("wizard.cancelled_title")
             cancel.informativeText = t("wizard.cancelled_msg")
             cancel.runModal()
@@ -517,10 +524,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func pickFolder(prompt: String) -> String? {
         let panel = NSOpenPanel()
         panel.message = prompt
+        panel.prompt = t("wizard.choose_folder")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
+        panel.isExtensionHidden = true
+        panel.showsHiddenFiles = false
         NSApp.activate(ignoringOtherApps: true)
         return panel.runModal() == .OK ? panel.url?.path : nil
     }
