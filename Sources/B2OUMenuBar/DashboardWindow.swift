@@ -1,20 +1,19 @@
 // DashboardWindow.swift — Statistics dashboard with writing heatmap and Note of the Day.
 //
-// Displays aggregate statistics computed from exported notes: headline numbers,
-// tag frequency bars, longest notes, a GitHub-style activity heatmap, and a
-// "Note of the Day" resurfacing feature.
-//
-// Uses a flipped document view (y=0 at top) for natural top-to-bottom layout.
+// Apple-design-inspired layout: full-size content view with titlebar vibrancy,
+// card-based sections, SF Pro typography hierarchy, and generous whitespace.
 
 import Cocoa
 import B2OUCore
 
 // MARK: - Layout Constants
 
-private let dashWidth:  CGFloat = 640
-private let dashHeight: CGFloat = 700
-private let dashPad:    CGFloat = 24
-private let sectionGap: CGFloat = 22
+private let dashWidth:  CGFloat = 680
+private let dashHeight: CGFloat = 760
+private let dashPad:    CGFloat = 28
+private let sectionGap: CGFloat = 20
+private let cardPad:    CGFloat = 18
+private let cardRadius: CGFloat = 12
 
 // MARK: - Flipped View (y=0 at top)
 
@@ -22,11 +21,26 @@ private class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
+// MARK: - Card View
+
+private func makeCard(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> NSView {
+    let card = NSView(frame: NSRect(x: x, y: y, width: width, height: height))
+    card.wantsLayer = true
+    card.layer?.cornerRadius = cardRadius
+    card.layer?.masksToBounds = true
+    if #available(macOS 14.0, *) {
+        card.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.06).cgColor
+    } else {
+        card.layer?.backgroundColor = NSColor(white: 0.5, alpha: 0.06).cgColor
+    }
+    return card
+}
+
 // MARK: - Heatmap View
 
 private let cellSize: CGFloat = 11
-private let cellGap:  CGFloat = 2
-private let cellStep: CGFloat = 13   // cellSize + cellGap
+private let cellGap:  CGFloat = 3
+private let cellStep: CGFloat = 14   // cellSize + cellGap
 private let weeksShown = 52
 
 class HeatmapView: NSView {
@@ -38,20 +52,20 @@ class HeatmapView: NSView {
 
         let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let emptyColor = isDark
-            ? NSColor(white: 0.22, alpha: 1)
-            : NSColor(white: 0.91, alpha: 1)
+            ? NSColor(white: 0.18, alpha: 1)
+            : NSColor(white: 0.93, alpha: 1)
         let greens: [NSColor] = isDark
             ? [
-                NSColor(calibratedRed: 0.15, green: 0.40, blue: 0.15, alpha: 1),
-                NSColor(calibratedRed: 0.20, green: 0.55, blue: 0.20, alpha: 1),
-                NSColor(calibratedRed: 0.25, green: 0.70, blue: 0.25, alpha: 1),
-                NSColor(calibratedRed: 0.30, green: 0.85, blue: 0.30, alpha: 1),
+                NSColor(calibratedRed: 0.12, green: 0.38, blue: 0.22, alpha: 1),
+                NSColor(calibratedRed: 0.14, green: 0.52, blue: 0.30, alpha: 1),
+                NSColor(calibratedRed: 0.18, green: 0.68, blue: 0.38, alpha: 1),
+                NSColor(calibratedRed: 0.22, green: 0.82, blue: 0.46, alpha: 1),
               ]
             : [
-                NSColor(calibratedRed: 0.60, green: 0.85, blue: 0.60, alpha: 1),
-                NSColor(calibratedRed: 0.35, green: 0.72, blue: 0.35, alpha: 1),
-                NSColor(calibratedRed: 0.15, green: 0.58, blue: 0.15, alpha: 1),
-                NSColor(calibratedRed: 0.00, green: 0.42, blue: 0.00, alpha: 1),
+                NSColor(calibratedRed: 0.62, green: 0.84, blue: 0.68, alpha: 1),
+                NSColor(calibratedRed: 0.38, green: 0.72, blue: 0.48, alpha: 1),
+                NSColor(calibratedRed: 0.20, green: 0.58, blue: 0.34, alpha: 1),
+                NSColor(calibratedRed: 0.08, green: 0.44, blue: 0.22, alpha: 1),
               ]
 
         let cal = Calendar.current
@@ -76,7 +90,7 @@ class HeatmapView: NSView {
                 let rect = NSRect(x: x, y: y, width: cellSize, height: cellSize)
 
                 color.setFill()
-                NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
+                NSBezierPath(roundedRect: rect, xRadius: 2.5, yRadius: 2.5).fill()
 
                 currentDate = cal.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
             }
@@ -117,20 +131,34 @@ class DashboardController: NSObject {
         guard let store, let stats = store.stats else { return }
         noteOfDay = store.noteOfTheDay()
 
-        let style: NSWindow.StyleMask = [.titled, .closable]
+        // Full-size content view for titlebar blending
+        let style: NSWindow.StyleMask = [.titled, .closable, .fullSizeContentView]
         let rect = NSRect(x: 0, y: 0, width: dashWidth, height: dashHeight)
         window = NSWindow(contentRect: rect, styleMask: style, backing: .buffered, defer: false)
         window?.title = t("dashboard.title")
+        window?.titlebarAppearsTransparent = true
+        window?.titleVisibility = .visible
         window?.center()
         window?.isReleasedWhenClosed = false
+        window?.backgroundColor = .windowBackgroundColor
 
         guard let content = window?.contentView else { return }
+        content.wantsLayer = true
+
+        // Vibrancy background
+        let vibrancy = NSVisualEffectView(frame: content.bounds)
+        vibrancy.autoresizingMask = [.width, .height]
+        vibrancy.blendingMode = .behindWindow
+        vibrancy.material = .sidebar
+        vibrancy.state = .active
+        content.addSubview(vibrancy)
 
         // Scroll view
         let scrollView = NSScrollView(frame: content.bounds)
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
+        scrollView.automaticallyAdjustsContentInsets = true
         content.addSubview(scrollView)
 
         // Flipped document view (y=0 at top, increases downward)
@@ -138,9 +166,13 @@ class DashboardController: NSObject {
         scrollView.documentView = docView
 
         let w = dashWidth - dashPad * 2
-        var cy = dashPad
+        var cy: CGFloat = dashPad + 28  // extra top space for titlebar
 
-        // ── Headline Stats ──────────────────────────────────────
+        // ── Headline Stats Card ──────────────────────────────────
+
+        let statsCardH: CGFloat = 88
+        let statsCard = makeCard(x: dashPad, y: cy, width: w, height: statsCardH)
+        docView.addSubview(statsCard)
 
         let statW = w / 3
 
@@ -149,144 +181,177 @@ class DashboardController: NSObject {
             (formatNumber(stats.totalWords), t("dashboard.total_words")),
             (formatNumber(stats.averageWords), t("dashboard.avg_words")),
         ].enumerated() {
-            let x = dashPad + CGFloat(i) * statW
+            let x = CGFloat(i) * statW
 
             let numLabel = NSTextField(labelWithString: value)
-            numLabel.frame = NSRect(x: x, y: cy, width: statW, height: 32)
-            numLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 28, weight: .bold)
+            numLabel.frame = NSRect(x: x, y: 16, width: statW, height: 34)
+            numLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 30, weight: .semibold)
             numLabel.alignment = .center
-            docView.addSubview(numLabel)
+            numLabel.textColor = .labelColor
+            statsCard.addSubview(numLabel)
 
-            let descLabel = NSTextField(labelWithString: label)
-            descLabel.frame = NSRect(x: x, y: cy + 34, width: statW, height: 18)
-            descLabel.font = NSFont.systemFont(ofSize: 12)
-            descLabel.textColor = .secondaryLabelColor
+            let descLabel = NSTextField(labelWithString: label.uppercased())
+            descLabel.frame = NSRect(x: x, y: 52, width: statW, height: 16)
+            descLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+            descLabel.textColor = .tertiaryLabelColor
             descLabel.alignment = .center
-            docView.addSubview(descLabel)
+            if #available(macOS 11.0, *) {
+                // Use tracking for uppercase labels
+            }
+            statsCard.addSubview(descLabel)
         }
-        cy += 56 + sectionGap
+        cy += statsCardH + sectionGap
 
-        // ── Top Tags ────────────────────────────────────────────
+        // ── Top Tags Card ────────────────────────────────────────
 
         if !stats.tagFrequency.isEmpty {
-            let tagTitle = NSTextField(labelWithString: t("dashboard.top_tags"))
-            tagTitle.frame = NSRect(x: dashPad, y: cy, width: w, height: 20)
-            tagTitle.font = NSFont.boldSystemFont(ofSize: 13)
-            docView.addSubview(tagTitle)
-            cy += 24
+            let topTags = Array(stats.tagFrequency.prefix(8))
+            let tagRows = CGFloat(topTags.count)
+            let tagCardH: CGFloat = 32 + tagRows * 24 + 12
 
-            let topTags = Array(stats.tagFrequency.prefix(10))
+            let tagCard = makeCard(x: dashPad, y: cy, width: w, height: tagCardH)
+            docView.addSubview(tagCard)
+
+            let sectionTitle = NSTextField(labelWithString: t("dashboard.top_tags"))
+            sectionTitle.frame = NSRect(x: cardPad, y: 12, width: w - cardPad * 2, height: 18)
+            sectionTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            sectionTitle.textColor = .secondaryLabelColor
+            tagCard.addSubview(sectionTitle)
+
             let maxCount = topTags.first?.count ?? 1
+            var ty: CGFloat = 34
 
             for tag in topTags {
                 let tagLabel = NSTextField(labelWithString: tag.tag)
-                tagLabel.frame = NSRect(x: dashPad, y: cy, width: 140, height: 18)
+                tagLabel.frame = NSRect(x: cardPad, y: ty, width: 130, height: 18)
                 tagLabel.font = NSFont.systemFont(ofSize: 11)
                 tagLabel.alignment = .right
                 tagLabel.lineBreakMode = .byTruncatingTail
-                docView.addSubview(tagLabel)
+                tagLabel.textColor = .labelColor
+                tagCard.addSubview(tagLabel)
 
-                let barMaxW: CGFloat = w - 210
+                let barMaxW: CGFloat = w - cardPad * 2 - 200
                 let barW = max(4, barMaxW * CGFloat(tag.count) / CGFloat(maxCount))
-                let barView = NSView(frame: NSRect(x: dashPad + 148, y: cy + 2, width: barW, height: 14))
+                let barView = NSView(frame: NSRect(x: cardPad + 140, y: ty + 3, width: barW, height: 12))
                 barView.wantsLayer = true
-                barView.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+                barView.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.75).cgColor
                 barView.layer?.cornerRadius = 3
-                docView.addSubview(barView)
+                tagCard.addSubview(barView)
 
                 let countLabel = NSTextField(labelWithString: "\(tag.count)")
-                countLabel.frame = NSRect(x: dashPad + 156 + barW, y: cy, width: 40, height: 18)
-                countLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-                countLabel.textColor = .secondaryLabelColor
-                docView.addSubview(countLabel)
+                countLabel.frame = NSRect(x: cardPad + 148 + barW, y: ty, width: 40, height: 18)
+                countLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+                countLabel.textColor = .tertiaryLabelColor
+                tagCard.addSubview(countLabel)
 
-                cy += 22
+                ty += 24
             }
-            cy += sectionGap
+            cy += tagCardH + sectionGap
         }
 
-        // ── Longest Notes ───────────────────────────────────────
+        // ── Longest Notes Card ───────────────────────────────────
 
         if !stats.longestNotes.isEmpty {
-            let longTitle = NSTextField(labelWithString: t("dashboard.longest_notes"))
-            longTitle.frame = NSRect(x: dashPad, y: cy, width: w, height: 20)
-            longTitle.font = NSFont.boldSystemFont(ofSize: 13)
-            docView.addSubview(longTitle)
-            cy += 24
+            let noteRows = CGFloat(stats.longestNotes.count)
+            let longCardH: CGFloat = 32 + noteRows * 22 + 12
 
+            let longCard = makeCard(x: dashPad, y: cy, width: w, height: longCardH)
+            docView.addSubview(longCard)
+
+            let sectionTitle = NSTextField(labelWithString: t("dashboard.longest_notes"))
+            sectionTitle.frame = NSRect(x: cardPad, y: 12, width: w - cardPad * 2, height: 18)
+            sectionTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            sectionTitle.textColor = .secondaryLabelColor
+            longCard.addSubview(sectionTitle)
+
+            var ny: CGFloat = 34
             for entry in stats.longestNotes {
                 let noteLabel = NSTextField(labelWithString: entry.title)
-                noteLabel.frame = NSRect(x: dashPad + 8, y: cy, width: w - 80, height: 18)
+                noteLabel.frame = NSRect(x: cardPad, y: ny, width: w - cardPad * 2 - 70, height: 18)
                 noteLabel.font = NSFont.systemFont(ofSize: 11)
                 noteLabel.lineBreakMode = .byTruncatingTail
-                docView.addSubview(noteLabel)
+                noteLabel.textColor = .labelColor
+                longCard.addSubview(noteLabel)
 
                 let wordsLabel = NSTextField(labelWithString: formatNumber(entry.words))
-                wordsLabel.frame = NSRect(x: dashPad + w - 70, y: cy, width: 70, height: 18)
-                wordsLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-                wordsLabel.textColor = .secondaryLabelColor
+                wordsLabel.frame = NSRect(x: w - cardPad - 60, y: ny, width: 60, height: 18)
+                wordsLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+                wordsLabel.textColor = .tertiaryLabelColor
                 wordsLabel.alignment = .right
-                docView.addSubview(wordsLabel)
+                longCard.addSubview(wordsLabel)
 
-                cy += 20
+                ny += 22
             }
-            cy += sectionGap
+            cy += longCardH + sectionGap
         }
 
-        // ── Writing Activity Heatmap ────────────────────────────
-
-        let actTitle = NSTextField(labelWithString: t("dashboard.activity"))
-        actTitle.frame = NSRect(x: dashPad, y: cy, width: w, height: 20)
-        actTitle.font = NSFont.boldSystemFont(ofSize: 13)
-        docView.addSubview(actTitle)
-        cy += 26
+        // ── Writing Activity Heatmap Card ────────────────────────
 
         let heatSize = HeatmapView.requiredSize()
+        let heatCardH: CGFloat = 36 + heatSize.height + 16
+
+        let heatCard = makeCard(x: dashPad, y: cy, width: w, height: heatCardH)
+        docView.addSubview(heatCard)
+
+        let actTitle = NSTextField(labelWithString: t("dashboard.activity"))
+        actTitle.frame = NSRect(x: cardPad, y: 12, width: w - cardPad * 2, height: 18)
+        actTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        actTitle.textColor = .secondaryLabelColor
+        heatCard.addSubview(actTitle)
+
         let heatmap = HeatmapView(frame: NSRect(
-            x: dashPad + (w - heatSize.width) / 2,
-            y: cy,
+            x: (w - heatSize.width) / 2,
+            y: 36,
             width: heatSize.width,
             height: heatSize.height
         ))
         heatmap.activityDays = stats.activityDays
-        docView.addSubview(heatmap)
-        cy += heatSize.height + sectionGap
+        heatCard.addSubview(heatmap)
+        cy += heatCardH + sectionGap
 
-        // ── Note of the Day ─────────────────────────────────────
+        // ── Note of the Day Card ─────────────────────────────────
 
         if let noteOfDay {
-            let nodTitle = NSTextField(labelWithString: t("dashboard.note_of_day"))
-            nodTitle.frame = NSRect(x: dashPad, y: cy, width: w, height: 20)
-            nodTitle.font = NSFont.boldSystemFont(ofSize: 13)
-            docView.addSubview(nodTitle)
-            cy += 26
+            let nodCardH: CGFloat = 100
+
+            let nodCard = makeCard(x: dashPad, y: cy, width: w, height: nodCardH)
+            docView.addSubview(nodCard)
+
+            let sectionTitle = NSTextField(labelWithString: t("dashboard.note_of_day"))
+            sectionTitle.frame = NSRect(x: cardPad, y: 12, width: w - cardPad * 2, height: 18)
+            sectionTitle.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            sectionTitle.textColor = .secondaryLabelColor
+            nodCard.addSubview(sectionTitle)
 
             let noteTitle = NSTextField(labelWithString: "\u{201c}\(noteOfDay.title)\u{201d}")
-            noteTitle.frame = NSRect(x: dashPad + 8, y: cy, width: w - 16, height: 20)
-            noteTitle.font = NSFont.systemFont(ofSize: 13)
+            noteTitle.frame = NSRect(x: cardPad, y: 34, width: w - cardPad * 2, height: 20)
+            noteTitle.font = NSFont.systemFont(ofSize: 14, weight: .medium)
             noteTitle.lineBreakMode = .byTruncatingTail
-            docView.addSubview(noteTitle)
-            cy += 22
+            noteTitle.textColor = .labelColor
+            nodCard.addSubview(noteTitle)
 
+            var infoY: CGFloat = 56
             if let created = noteOfDay.created {
                 let ago = agoString(from: created)
                 let agoLabel = NSTextField(labelWithString:
                     t("dashboard.written_ago").replacingOccurrences(of: "{time}", with: ago))
-                agoLabel.frame = NSRect(x: dashPad + 8, y: cy, width: w - 16, height: 16)
+                agoLabel.frame = NSRect(x: cardPad, y: infoY, width: w - cardPad * 2 - 120, height: 16)
                 agoLabel.font = NSFont.systemFont(ofSize: 11)
-                agoLabel.textColor = .secondaryLabelColor
-                docView.addSubview(agoLabel)
-                cy += 20
+                agoLabel.textColor = .tertiaryLabelColor
+                nodCard.addSubview(agoLabel)
+                infoY += 18
             }
 
-            cy += 6
-            let openBtn = NSButton(frame: NSRect(x: dashPad + 8, y: cy, width: 140, height: 24))
+            let openBtn = NSButton(frame: NSRect(x: w - cardPad - 110, y: nodCardH - 38, width: 100, height: 26))
             openBtn.title = t("dashboard.open_editor")
             openBtn.bezelStyle = .rounded
+            openBtn.controlSize = .small
+            openBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
             openBtn.target = self
             openBtn.action = #selector(onOpenNoteOfDay)
-            docView.addSubview(openBtn)
-            cy += 30 + sectionGap
+            nodCard.addSubview(openBtn)
+
+            cy += nodCardH + sectionGap
         }
 
         // Set document view to exact content height

@@ -1,25 +1,26 @@
 // SettingsPanel.swift — Native macOS settings panel for B2OU.
 //
-// Port of the Python/PyObjC settings panel (b2ou/settings_panel.py)
-// to pure AppKit. Provides a Cocoa NSWindow with toggles, popup menus,
-// folder pickers, and info popovers.
+// Apple-design-inspired: full-size content view with titlebar vibrancy,
+// grouped card sections, SF Pro typography, and generous spacing.
 
 import Cocoa
 import B2OUCore
 
 // MARK: - Layout Constants
 
-private let winWidth:  CGFloat = 520
-private let winHeight: CGFloat = 870
-private let pad:       CGFloat = 24
+private let winWidth:  CGFloat = 560
+private let winHeight: CGFloat = 900
+private let pad:       CGFloat = 28
 private let contentW:  CGFloat = winWidth - pad * 2
-private let rowH:      CGFloat = 28
-private let rowGap:    CGFloat = 10
-private let sectionGap: CGFloat = 18
+private let rowH:      CGFloat = 30
+private let rowGap:    CGFloat = 6
+private let sectionGap: CGFloat = 20
 private let labelW:    CGFloat = 220
 private let infoSize:  CGFloat = 20
 private let toggleW:   CGFloat = 40
 private let toggleH:   CGFloat = 22
+private let cardPad:   CGFloat = 16
+private let cardRadius: CGFloat = 10
 
 // MARK: - Naming / Delete Keys
 
@@ -66,6 +67,20 @@ typealias FolderPickerCallback = () -> String?
 
 // MARK: - Helpers
 
+private func makeCard(in parent: NSView, x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> NSView {
+    let card = NSView(frame: NSRect(x: x, y: y, width: width, height: height))
+    card.wantsLayer = true
+    card.layer?.cornerRadius = cardRadius
+    card.layer?.masksToBounds = true
+    if #available(macOS 14.0, *) {
+        card.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.06).cgColor
+    } else {
+        card.layer?.backgroundColor = NSColor(white: 0.5, alpha: 0.06).cgColor
+    }
+    parent.addSubview(card)
+    return card
+}
+
 private func makeLabel(
     _ text: String, x: CGFloat, y: CGFloat,
     width: CGFloat = labelW, height: CGFloat = rowH,
@@ -83,19 +98,22 @@ private func makeLabel(
     label.isEditable = false
     label.isSelectable = false
     if bold {
-        label.font = NSFont.boldSystemFont(ofSize: 13)
+        label.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        label.textColor = .secondaryLabelColor
     } else if small {
         label.font = NSFont.systemFont(ofSize: 11)
-        label.textColor = .secondaryLabelColor
+        label.textColor = .tertiaryLabelColor
     } else {
         label.font = NSFont.systemFont(ofSize: 13)
+        label.textColor = .labelColor
     }
     return label
 }
 
 private func makeToggle(state: Bool, x: CGFloat, y: CGFloat) -> NSSwitch {
-    let toggle = NSSwitch(frame: NSRect(x: x, y: y + 2, width: toggleW, height: toggleH))
+    let toggle = NSSwitch(frame: NSRect(x: x, y: y + 3, width: toggleW, height: toggleH))
     toggle.state = state ? .on : .off
+    toggle.controlSize = .small
     return toggle
 }
 
@@ -108,14 +126,15 @@ private func makeCheckbox(_ text: String, state: Bool, x: CGFloat, y: CGFloat, w
 }
 
 private func makeInfoButton(tag: Int, x: CGFloat, y: CGFloat, target: AnyObject, action: Selector) -> NSButton {
-    let btn = NSButton(frame: NSRect(x: x, y: y, width: infoSize + 4, height: rowH))
-    btn.title = "\u{24d8}"
+    let btn = NSButton(frame: NSRect(x: x, y: y + 4, width: 20, height: 20))
+    btn.title = ""
+    btn.image = NSImage(named: NSImage.infoName)
     btn.isBordered = false
-    btn.font = NSFont.systemFont(ofSize: 15)
-    btn.toolTip = nil
+    btn.imageScaling = .scaleProportionallyDown
     btn.tag = tag
     btn.target = target
     btn.action = action
+    btn.toolTip = nil
     return btn
 }
 
@@ -123,8 +142,8 @@ private func showPopover(relativeTo view: NSView, text: String) {
     let popover = NSPopover()
     let vc = NSViewController()
 
-    let popPad: CGFloat = 12
-    let maxW: CGFloat = 300
+    let popPad: CGFloat = 14
+    let maxW: CGFloat = 280
 
     let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: maxW, height: 10))
     textView.string = text
@@ -212,93 +231,126 @@ class SettingsPanelController: NSObject {
 
     private func buildWindow() {
         let v = values!
-        let style: NSWindow.StyleMask = [.titled, .closable]
+        let style: NSWindow.StyleMask = [.titled, .closable, .fullSizeContentView]
         let rect = NSRect(x: 200, y: 200, width: winWidth, height: winHeight)
 
         window = NSWindow(contentRect: rect, styleMask: style, backing: .buffered, defer: false)
         window?.title = t("settings.title")
+        window?.titlebarAppearsTransparent = true
+        window?.titleVisibility = .visible
         window?.center()
         window?.isReleasedWhenClosed = false
+        window?.backgroundColor = .windowBackgroundColor
 
         guard let content = window?.contentView else { return }
-        let ch = content.frame.height
-        var cy = ch - pad
-        let x0 = pad
-        let right = winWidth - pad
-        let infoX = right - infoSize - 4
+        content.wantsLayer = true
 
-        // ── Export Formats ──────────────────────────────────
-        cy -= rowH
-        content.addSubview(makeLabel(t("settings.format"), x: x0, y: cy, bold: true))
-        content.addSubview(makeInfoButton(tag: 0, x: infoX, y: cy, target: self, action: #selector(onInfo(_:))))
+        // Vibrancy background
+        let vibrancy = NSVisualEffectView(frame: content.bounds)
+        vibrancy.autoresizingMask = [.width, .height]
+        vibrancy.blendingMode = .behindWindow
+        vibrancy.material = .sidebar
+        vibrancy.state = .active
+        content.addSubview(vibrancy)
+
+        // Scroll view for content
+        let scrollView = NSScrollView(frame: content.bounds)
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.automaticallyAdjustsContentInsets = true
+        content.addSubview(scrollView)
+
+        let docView = FlippedView(frame: NSRect(x: 0, y: 0, width: winWidth, height: 0))
+        scrollView.documentView = docView
+
+        let w = contentW
+        var cy: CGFloat = pad + 28  // titlebar space
+
+        let x0: CGFloat = pad
+        let infoX = x0 + w - infoSize - 4
+        let indent: CGFloat = 18
+
+        // ── Export Formats Card ──────────────────────────────
 
         let mdEnabled = v.exportFormat == "md" || v.exportFormat == "both"
         let tbEnabled = v.exportFormat == "tb" || v.exportFormat == "both"
-        let indent: CGFloat = 18
+
+        let formatCardH: CGFloat = 280
+        let formatCard = makeCard(in: docView, x: x0, y: cy, width: w, height: formatCardH)
+
+        var fy: CGFloat = 12
+
+        let formatTitle = makeLabel(t("settings.format"), x: cardPad, y: fy, width: w - cardPad * 2, bold: true)
+        formatCard.addSubview(formatTitle)
+        formatCard.addSubview(makeInfoButton(tag: 0, x: w - cardPad - infoSize, y: fy, target: self, action: #selector(onInfo(_:))))
+        fy += rowH
 
         // Markdown checkbox
-        cy -= rowH
-        checkMD = makeCheckbox(t("settings.format_md"), state: mdEnabled, x: x0 + 6, y: cy, width: 240)
+        checkMD = makeCheckbox(t("settings.format_md"), state: mdEnabled, x: cardPad + 4, y: fy, width: 240)
         checkMD?.target = self
         checkMD?.action = #selector(onFormatChanged(_:))
-        content.addSubview(checkMD!)
+        formatCard.addSubview(checkMD!)
+        fy += rowH
 
-        // Markdown folder label + info
-        cy -= rowH
-        let mdTitle = makeLabel(t("settings.export_folder_md"), x: x0 + indent, y: cy)
-        content.addSubview(mdTitle)
-        let mdInfo = makeInfoButton(tag: 1, x: infoX, y: cy, target: self, action: #selector(onInfo(_:)))
-        content.addSubview(mdInfo)
+        // Markdown folder label
+        let mdTitle = makeLabel(t("settings.export_folder_md"), x: cardPad + indent, y: fy, width: w - cardPad * 2 - indent)
+        formatCard.addSubview(mdTitle)
+        let mdInfo = makeInfoButton(tag: 1, x: w - cardPad - infoSize, y: fy, target: self, action: #selector(onInfo(_:)))
+        formatCard.addSubview(mdInfo)
+        fy += rowH
 
         // Markdown folder picker
-        cy -= rowH
         let folderDisplay = v.exportPath.isEmpty ? "..." : v.exportPath
-        folderLabel = makeLabel(folderDisplay, x: x0 + indent, y: cy, width: contentW - 90 - indent)
+        folderLabel = makeLabel(folderDisplay, x: cardPad + indent, y: fy, width: w - cardPad * 2 - 90 - indent)
         folderLabel?.lineBreakMode = .byTruncatingMiddle
-        content.addSubview(folderLabel!)
+        folderLabel?.textColor = .secondaryLabelColor
+        formatCard.addSubview(folderLabel!)
 
-        let changeBtn = NSButton(frame: NSRect(x: right - 80, y: cy, width: 80, height: rowH))
+        let changeBtn = NSButton(frame: NSRect(x: w - cardPad - 80, y: fy, width: 80, height: rowH))
         changeBtn.title = t("settings.change")
         changeBtn.bezelStyle = .rounded
+        changeBtn.controlSize = .small
         changeBtn.target = self
         changeBtn.action = #selector(onChangeFolderMD(_:))
-        content.addSubview(changeBtn)
+        formatCard.addSubview(changeBtn)
+        fy += rowH + rowGap
 
         // TextBundle checkbox
-        cy -= rowGap
-        cy -= rowH
-        checkTB = makeCheckbox(t("settings.format_tb"), state: tbEnabled, x: x0 + 6, y: cy, width: 260)
+        checkTB = makeCheckbox(t("settings.format_tb"), state: tbEnabled, x: cardPad + 4, y: fy, width: 260)
         checkTB?.target = self
         checkTB?.action = #selector(onFormatChanged(_:))
-        content.addSubview(checkTB!)
+        formatCard.addSubview(checkTB!)
+        fy += rowH
 
-        // TextBundle folder label + info
-        cy -= rowH
-        let tbTitle = makeLabel(t("settings.export_folder_tb"), x: x0 + indent, y: cy)
-        content.addSubview(tbTitle)
-        let tbInfo = makeInfoButton(tag: 2, x: infoX, y: cy, target: self, action: #selector(onInfo(_:)))
-        content.addSubview(tbInfo)
+        // TextBundle folder label
+        let tbTitle = makeLabel(t("settings.export_folder_tb"), x: cardPad + indent, y: fy, width: w - cardPad * 2 - indent)
+        formatCard.addSubview(tbTitle)
+        let tbInfo = makeInfoButton(tag: 2, x: w - cardPad - infoSize, y: fy, target: self, action: #selector(onInfo(_:)))
+        formatCard.addSubview(tbInfo)
+        fy += rowH
 
         // TextBundle folder picker
-        cy -= rowH
         let folderTBDisplay = v.exportPathTB.isEmpty ? "..." : v.exportPathTB
-        folderTBLabel = makeLabel(folderTBDisplay, x: x0 + indent, y: cy, width: contentW - 90 - indent)
+        folderTBLabel = makeLabel(folderTBDisplay, x: cardPad + indent, y: fy, width: w - cardPad * 2 - 90 - indent)
         folderTBLabel?.lineBreakMode = .byTruncatingMiddle
-        content.addSubview(folderTBLabel!)
+        folderTBLabel?.textColor = .secondaryLabelColor
+        formatCard.addSubview(folderTBLabel!)
 
-        changeTBBtn = NSButton(frame: NSRect(x: right - 80, y: cy, width: 80, height: rowH))
+        changeTBBtn = NSButton(frame: NSRect(x: w - cardPad - 80, y: fy, width: 80, height: rowH))
         changeTBBtn?.title = t("settings.change")
         changeTBBtn?.bezelStyle = .rounded
+        changeTBBtn?.controlSize = .small
         changeTBBtn?.target = self
         changeTBBtn?.action = #selector(onChangeFolderTB(_:))
-        content.addSubview(changeTBBtn!)
+        formatCard.addSubview(changeTBBtn!)
+        fy += rowH + 4
 
-        cy -= 36
         let tbNote = makeLabel(
-            t("settings.folder_not_same"), x: x0 + indent, y: cy,
-            width: contentW - indent, height: 32, small: true, wrap: true
+            t("settings.folder_not_same"), x: cardPad + indent, y: fy,
+            width: w - cardPad * 2 - indent, height: 32, small: true, wrap: true
         )
-        content.addSubview(tbNote)
+        formatCard.addSubview(tbNote)
 
         mdControls = [mdTitle, mdInfo, folderLabel!, changeBtn]
         tbControls = [tbTitle, tbInfo, folderTBLabel!, changeTBBtn!, tbNote]
@@ -306,10 +358,15 @@ class SettingsPanelController: NSObject {
         setControlsEnabled(mdControls, enabled: mdEnabled)
         setControlsEnabled(tbControls, enabled: tbEnabled)
 
-        cy -= sectionGap - 6
+        cy += formatCardH + sectionGap
 
-        // ── Toggle rows ─────────────────────────────────────
-        let toggleX = right - toggleW - infoSize - 16
+        // ── Options Card (toggles) ──────────────────────────
+
+        let optionsCardH: CGFloat = 4 * (rowH + rowGap) + 24
+        let optionsCard = makeCard(in: docView, x: x0, y: cy, width: w, height: optionsCardH)
+
+        let toggleX = w - cardPad - toggleW - infoSize - 12
+        var oy: CGFloat = 12
 
         let toggleDefs: [(String, Int, Bool)] = [
             ("settings.yaml",        3, v.yamlFrontMatter),
@@ -320,13 +377,12 @@ class SettingsPanelController: NSObject {
 
         var toggleRefs: [NSSwitch] = []
         for (labelKey, helpTag, val) in toggleDefs {
-            cy -= rowH
-            content.addSubview(makeLabel(t(labelKey), x: x0, y: cy, width: labelW))
-            let toggle = makeToggle(state: val, x: toggleX, y: cy)
+            optionsCard.addSubview(makeLabel(t(labelKey), x: cardPad, y: oy, width: w - cardPad * 2 - toggleW - infoSize - 20))
+            let toggle = makeToggle(state: val, x: toggleX, y: oy)
             toggleRefs.append(toggle)
-            content.addSubview(toggle)
-            content.addSubview(makeInfoButton(tag: helpTag, x: infoX, y: cy, target: self, action: #selector(onInfo(_:))))
-            cy -= rowGap
+            optionsCard.addSubview(toggle)
+            optionsCard.addSubview(makeInfoButton(tag: helpTag, x: w - cardPad - infoSize, y: oy, target: self, action: #selector(onInfo(_:))))
+            oy += rowH + rowGap
         }
 
         toggleYaml       = toggleRefs[0]
@@ -334,16 +390,23 @@ class SettingsPanelController: NSObject {
         toggleHideTags    = toggleRefs[2]
         toggleAutoStart   = toggleRefs[3]
 
-        cy -= sectionGap - rowGap
+        cy += optionsCardH + sectionGap
 
-        // ── Popup rows ──────────────────────────────────────
-        let popupX = right - 160 - infoSize - 12
+        // ── Naming & Delete Card ────────────────────────────
+
+        let popupX = w - cardPad - 150 - infoSize - 8
         let popupW: CGFloat = 150
 
+        let namingCardH: CGFloat = 2 * (rowH + rowGap) + 24
+        let namingCard = makeCard(in: docView, x: x0, y: cy, width: w, height: namingCardH)
+
+        var ny: CGFloat = 12
+
         // Naming strategy
-        cy -= rowH
-        content.addSubview(makeLabel(t("settings.naming"), x: x0, y: cy))
-        popupNaming = NSPopUpButton(frame: NSRect(x: popupX, y: cy, width: popupW, height: rowH), pullsDown: false)
+        namingCard.addSubview(makeLabel(t("settings.naming"), x: cardPad, y: ny))
+        popupNaming = NSPopUpButton(frame: NSRect(x: popupX, y: ny, width: popupW, height: rowH), pullsDown: false)
+        popupNaming?.controlSize = .small
+        popupNaming?.font = NSFont.systemFont(ofSize: 12)
         popupNaming?.addItems(withTitles: [
             t("settings.naming_title"),
             t("settings.naming_slug"),
@@ -353,15 +416,15 @@ class SettingsPanelController: NSObject {
         if let idx = namingKeys.firstIndex(of: v.naming) {
             popupNaming?.selectItem(at: idx)
         }
-        content.addSubview(popupNaming!)
-        content.addSubview(makeInfoButton(tag: 7, x: infoX, y: cy, target: self, action: #selector(onInfo(_:))))
-
-        cy -= rowGap
+        namingCard.addSubview(popupNaming!)
+        namingCard.addSubview(makeInfoButton(tag: 7, x: w - cardPad - infoSize, y: ny, target: self, action: #selector(onInfo(_:))))
+        ny += rowH + rowGap
 
         // On-delete policy
-        cy -= rowH
-        content.addSubview(makeLabel(t("settings.on_delete"), x: x0, y: cy))
-        popupDelete = NSPopUpButton(frame: NSRect(x: popupX, y: cy, width: popupW, height: rowH), pullsDown: false)
+        namingCard.addSubview(makeLabel(t("settings.on_delete"), x: cardPad, y: ny))
+        popupDelete = NSPopUpButton(frame: NSRect(x: popupX, y: ny, width: popupW, height: rowH), pullsDown: false)
+        popupDelete?.controlSize = .small
+        popupDelete?.font = NSFont.systemFont(ofSize: 12)
         popupDelete?.addItems(withTitles: [
             t("settings.delete_trash"),
             t("settings.delete_remove"),
@@ -370,19 +433,27 @@ class SettingsPanelController: NSObject {
         if let idx = deleteKeys.firstIndex(of: v.onDelete) {
             popupDelete?.selectItem(at: idx)
         }
-        content.addSubview(popupDelete!)
-        content.addSubview(makeInfoButton(tag: 8, x: infoX, y: cy, target: self, action: #selector(onInfo(_:))))
+        namingCard.addSubview(popupDelete!)
+        namingCard.addSubview(makeInfoButton(tag: 8, x: w - cardPad - infoSize, y: ny, target: self, action: #selector(onInfo(_:))))
 
-        cy -= sectionGap
+        cy += namingCardH + sectionGap
 
-        // ── Scheduled Backup ────────────────────────────────
-        cy -= rowH
-        content.addSubview(makeLabel(t("settings.backup"), x: x0, y: cy, bold: true))
-        content.addSubview(makeInfoButton(tag: 10, x: infoX, y: cy, target: self, action: #selector(onInfo(_:))))
+        // ── Scheduled Backup Card ───────────────────────────
 
-        cy -= rowH
-        content.addSubview(makeLabel(t("settings.backup_interval"), x: x0, y: cy))
-        popupBackup = NSPopUpButton(frame: NSRect(x: popupX, y: cy, width: popupW, height: rowH), pullsDown: false)
+        let backupCardH: CGFloat = 130
+        let backupCard = makeCard(in: docView, x: x0, y: cy, width: w, height: backupCardH)
+
+        var by: CGFloat = 12
+
+        let backupTitle = makeLabel(t("settings.backup"), x: cardPad, y: by, width: w - cardPad * 2, bold: true)
+        backupCard.addSubview(backupTitle)
+        backupCard.addSubview(makeInfoButton(tag: 10, x: w - cardPad - infoSize, y: by, target: self, action: #selector(onInfo(_:))))
+        by += rowH
+
+        backupCard.addSubview(makeLabel(t("settings.backup_interval"), x: cardPad, y: by))
+        popupBackup = NSPopUpButton(frame: NSRect(x: popupX, y: by, width: popupW, height: rowH), pullsDown: false)
+        popupBackup?.controlSize = .small
+        popupBackup?.font = NSFont.systemFont(ofSize: 12)
         popupBackup?.addItems(withTitles: [
             t("settings.backup_off"),
             t("settings.backup_30m"),
@@ -397,69 +468,85 @@ class SettingsPanelController: NSObject {
         }
         popupBackup?.target = self
         popupBackup?.action = #selector(onBackupIntervalChanged(_:))
-        content.addSubview(popupBackup!)
+        backupCard.addSubview(popupBackup!)
+        by += rowH
 
         // Backup folder
-        cy -= rowH
-        let backupFolderTitle = makeLabel(t("settings.backup_folder"), x: x0 + 18, y: cy)
-        content.addSubview(backupFolderTitle)
+        let backupFolderTitle = makeLabel(t("settings.backup_folder"), x: cardPad + indent, y: by)
+        backupCard.addSubview(backupFolderTitle)
+        by += rowH
 
-        cy -= rowH
         let backupDisplay = v.backupPath.isEmpty ? t("settings.backup_default") : v.backupPath
-        backupFolderLabel = makeLabel(backupDisplay, x: x0 + 18, y: cy, width: contentW - 90 - 18)
+        backupFolderLabel = makeLabel(backupDisplay, x: cardPad + indent, y: by, width: w - cardPad * 2 - 90 - indent)
         backupFolderLabel?.lineBreakMode = .byTruncatingMiddle
-        content.addSubview(backupFolderLabel!)
+        backupFolderLabel?.textColor = .secondaryLabelColor
+        backupCard.addSubview(backupFolderLabel!)
 
-        changeBackupBtn = NSButton(frame: NSRect(x: right - 80, y: cy, width: 80, height: rowH))
+        changeBackupBtn = NSButton(frame: NSRect(x: w - cardPad - 80, y: by, width: 80, height: rowH))
         changeBackupBtn?.title = t("settings.change")
         changeBackupBtn?.bezelStyle = .rounded
+        changeBackupBtn?.controlSize = .small
         changeBackupBtn?.target = self
         changeBackupBtn?.action = #selector(onChangeFolderBackup(_:))
-        content.addSubview(changeBackupBtn!)
+        backupCard.addSubview(changeBackupBtn!)
 
         backupControls = [backupFolderTitle, backupFolderLabel!, changeBackupBtn!]
         setControlsEnabled(backupControls, enabled: v.backupInterval > 0)
 
-        cy -= sectionGap
+        cy += backupCardH + sectionGap
 
-        // ── Exclude Tags ────────────────────────────────────
-        cy -= rowH
-        content.addSubview(makeLabel(t("settings.exclude_tags"), x: x0, y: cy, bold: true))
-        content.addSubview(makeInfoButton(tag: 9, x: infoX, y: cy, target: self, action: #selector(onInfo(_:))))
+        // ── Exclude Tags Card ───────────────────────────────
 
-        cy -= rowH
-        fieldExclude = NSTextField(frame: NSRect(x: x0, y: cy, width: contentW, height: rowH))
+        let excludeCardH: CGFloat = 120
+        let excludeCard = makeCard(in: docView, x: x0, y: cy, width: w, height: excludeCardH)
+
+        var ey: CGFloat = 12
+
+        excludeCard.addSubview(makeLabel(t("settings.exclude_tags"), x: cardPad, y: ey, width: w - cardPad * 2, bold: true))
+        excludeCard.addSubview(makeInfoButton(tag: 9, x: w - cardPad - infoSize, y: ey, target: self, action: #selector(onInfo(_:))))
+        ey += rowH
+
+        fieldExclude = NSTextField(frame: NSRect(x: cardPad, y: ey, width: w - cardPad * 2, height: 26))
         fieldExclude?.font = NSFont.systemFont(ofSize: 13)
         fieldExclude?.stringValue = v.excludeTags
         fieldExclude?.placeholderString = t("settings.exclude_placeholder")
-        content.addSubview(fieldExclude!)
+        fieldExclude?.bezelStyle = .roundedBezel
+        excludeCard.addSubview(fieldExclude!)
+        ey += 32
 
-        cy -= 44
         let exampleLabel = makeLabel(
-            t("settings.exclude_example"), x: x0 + 4, y: cy,
-            width: contentW - 8, height: 40, small: true, wrap: true
+            t("settings.exclude_example"), x: cardPad, y: ey,
+            width: w - cardPad * 2, height: 36, small: true, wrap: true
         )
-        content.addSubview(exampleLabel)
+        excludeCard.addSubview(exampleLabel)
 
-        // ── Buttons ─────────────────────────────────────────
-        let btnY = pad
-        let btnW: CGFloat = 90
+        cy += excludeCardH + sectionGap + 8
 
-        let applyBtn = NSButton(frame: NSRect(x: right - btnW, y: btnY, width: btnW, height: 32))
+        // ── Action Buttons ──────────────────────────────────
+
+        let btnW: CGFloat = 96
+
+        let applyBtn = NSButton(frame: NSRect(x: x0 + w - btnW, y: cy, width: btnW, height: 30))
         applyBtn.title = t("settings.apply")
         applyBtn.bezelStyle = .rounded
         applyBtn.keyEquivalent = "\r"
+        applyBtn.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         applyBtn.target = self
         applyBtn.action = #selector(onApplyClicked(_:))
-        content.addSubview(applyBtn)
+        docView.addSubview(applyBtn)
 
-        let cancelBtn = NSButton(frame: NSRect(x: right - btnW * 2 - 12, y: btnY, width: btnW, height: 32))
+        let cancelBtn = NSButton(frame: NSRect(x: x0 + w - btnW * 2 - 12, y: cy, width: btnW, height: 30))
         cancelBtn.title = t("settings.cancel")
         cancelBtn.bezelStyle = .rounded
         cancelBtn.keyEquivalent = "\u{1b}"
+        cancelBtn.font = NSFont.systemFont(ofSize: 13)
         cancelBtn.target = self
         cancelBtn.action = #selector(onCancelClicked(_:))
-        content.addSubview(cancelBtn)
+        docView.addSubview(cancelBtn)
+
+        cy += 40 + pad
+
+        docView.frame = NSRect(x: 0, y: 0, width: winWidth, height: cy)
     }
 
     // MARK: - Enable/Disable Controls
@@ -470,7 +557,7 @@ class SettingsPanelController: NSObject {
                 c.isEnabled = enabled
             }
             if let tf = ctl as? NSTextField {
-                tf.textColor = enabled ? .labelColor : .secondaryLabelColor
+                tf.textColor = enabled ? .labelColor : .quaternaryLabelColor
             }
         }
     }
@@ -510,7 +597,6 @@ class SettingsPanelController: NSObject {
         } else if tbOn == true {
             v.exportFormat = "tb"
         } else {
-            // No format selected — show validation
             let alert = NSAlert()
             alert.messageText = t("settings.title")
             alert.informativeText = t("settings.format_none")
@@ -518,7 +604,6 @@ class SettingsPanelController: NSObject {
             return
         }
 
-        // Validate MD folder
         if mdOn == true && v.exportPath.isEmpty {
             let alert = NSAlert()
             alert.messageText = t("settings.title")
@@ -527,7 +612,6 @@ class SettingsPanelController: NSObject {
             return
         }
 
-        // Validate TB folder
         if tbOn == true && v.exportPathTB.isEmpty {
             let alert = NSAlert()
             alert.messageText = t("settings.title")
@@ -536,13 +620,11 @@ class SettingsPanelController: NSObject {
             return
         }
 
-        // For TB-only mode, use the TB folder as the primary export path
         if v.exportFormat == "tb" {
             v.exportPath = v.exportPathTB
             v.exportPathTB = ""
         }
 
-        // Validate TB != MD for "both" mode
         if v.exportFormat == "both" && v.exportPath == v.exportPathTB {
             let alert = NSAlert()
             alert.messageText = t("settings.title")
@@ -597,6 +679,12 @@ class SettingsPanelController: NSObject {
         guard let helpKey = helpTags[sender.tag] else { return }
         showPopover(relativeTo: sender, text: t(helpKey))
     }
+}
+
+// MARK: - Flipped View
+
+private class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 // MARK: - Active Panel (prevent GC)
