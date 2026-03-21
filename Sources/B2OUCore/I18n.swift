@@ -27,11 +27,14 @@ public func detectSystemLanguage() -> String {
     return "en"
 }
 
-// MARK: - Global State
+// MARK: - Global State (thread-safe)
 
+private let langLock = NSLock()
 private var currentLang: String = "en"
 
 public func initLanguage() -> String {
+    langLock.lock()
+    defer { langLock.unlock() }
     if let saved = readLanguagePreference(), saved == "en" || saved == "zh" {
         currentLang = saved
     } else {
@@ -41,16 +44,23 @@ public func initLanguage() -> String {
 }
 
 public func setLanguage(_ lang: String) {
+    langLock.lock()
+    defer { langLock.unlock() }
     currentLang = (lang == "en" || lang == "zh") ? lang : "en"
     writeLanguagePreference(currentLang)
 }
 
 public func getLanguage() -> String {
-    currentLang
+    langLock.lock()
+    defer { langLock.unlock() }
+    return currentLang
 }
 
 public func t(_ key: String) -> String {
-    let table = strings[currentLang] ?? strings["en"]!
+    langLock.lock()
+    let lang = currentLang
+    langLock.unlock()
+    let table = strings[lang] ?? strings["en"]!
     return table[key] ?? strings["en"]![key] ?? key
 }
 

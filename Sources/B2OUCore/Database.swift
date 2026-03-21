@@ -101,12 +101,18 @@ public final class SQLiteConnection {
         query(sql, params: params).first
     }
 
+    /// SQLITE_TRANSIENT tells SQLite to make its own copy of the string immediately,
+    /// avoiding dangling-pointer bugs from temporary NSString.utf8String buffers.
+    private static let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
     private func bindParams(stmt: OpaquePointer, params: [Any]) {
         for (i, param) in params.enumerated() {
             let idx = Int32(i + 1)
             switch param {
             case let v as String:
-                sqlite3_bind_text(stmt, idx, (v as NSString).utf8String, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+                v.withCString { cStr in
+                    sqlite3_bind_text(stmt, idx, cStr, -1, SQLiteConnection.SQLITE_TRANSIENT)
+                }
             case let v as Int64:
                 sqlite3_bind_int64(stmt, idx, v)
             case let v as Int:
@@ -169,7 +175,9 @@ private let allowedTables: Set<String> = ["ZSFNOTE", "ZSFNOTEFILE", "ZSFNOTETAG"
 
 private func hasColumn(_ conn: SQLiteConnection, table: String, column: String) -> Bool {
     guard allowedTables.contains(table) else { return false }
-    let rows = conn.query("PRAGMA table_info(\(table))")
+    // Use double-quote identifier quoting for defense-in-depth against injection
+    let safeTable = table.replacingOccurrences(of: "\"", with: "\"\"")
+    let rows = conn.query("PRAGMA table_info(\"\(safeTable)\")")
     return rows.contains { ($0["name"] as? String) == column }
 }
 

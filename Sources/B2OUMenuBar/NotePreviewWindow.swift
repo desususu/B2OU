@@ -598,7 +598,8 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     @objc private func onOpenBear() {
         guard let note = selectedNote, !note.bearId.isEmpty,
-              let url = URL(string: "bear://x-callback-url/open-note?id=\(note.bearId)") else { return }
+              let encodedId = note.bearId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "bear://x-callback-url/open-note?id=\(encodedId)") else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -767,6 +768,11 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     // MARK: - HTML Wrapper
 
+    /// Sanitize a CSS value to prevent injection (strip semicolons, braces, etc.)
+    private func cssEscape(_ value: String) -> String {
+        value.filter { !";{}()<>\"'\\".contains($0) }
+    }
+
     private func wrapInHTML(_ body: String) -> String {
         let bg = isDarkMode ? "#1e1e1e" : "#ffffff"
         let fg = isDarkMode ? "#e0e0e0" : "#1d1d1f"
@@ -775,6 +781,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         let link = isDarkMode ? "#4da6ff" : "#0066cc"
         let quote = isDarkMode ? "#aaa" : "#666"
         let markBg = isDarkMode ? "#5a4a00" : "#fff3cd"
+        let safeFont = cssEscape(fontFamily)
 
         return """
         <!DOCTYPE html>
@@ -782,7 +789,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         <head><meta charset="utf-8">
         <style>
         body {
-            font-family: \(fontFamily);
+            font-family: \(safeFont);
             font-size: \(Int(fontSize))px;
             line-height: \(String(format: "%.1f", lineSpacing));
             color: \(fg);

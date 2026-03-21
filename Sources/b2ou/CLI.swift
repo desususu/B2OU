@@ -444,10 +444,14 @@ private func setupLogging(verbose: Bool) {
     // For now, just a simple logging setup
 }
 
+private let logFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    return f
+}()
+
 private func log(_ message: String) {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-    print("\(formatter.string(from: Date())) [INFO] \(message)")
+    print("\(logFormatter.string(from: Date())) [INFO] \(message)")
 }
 
 private func printErr(_ message: String) {

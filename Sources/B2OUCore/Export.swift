@@ -139,7 +139,7 @@ public func writeNoteFile(filepath: URL, content: String, modifiedUnix: Double, 
     do {
         try content.write(to: tmp, atomically: false, encoding: .utf8)
         // Set restrictive permissions on note content before moving into place
-        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
         if fm.fileExists(atPath: filepath.path) {
             _ = try fm.replaceItemAt(filepath, withItemAt: tmp)
         } else {
@@ -378,6 +378,7 @@ public func makeTextBundle(
     let tmpBundle = fm.temporaryDirectory.appendingPathComponent(".b2ou-tb-\(UUID().uuidString)")
     let tmpAssets = tmpBundle.appendingPathComponent("assets")
     try? fm.createDirectory(at: tmpAssets, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmpBundle) }
 
     let info: [String: Any] = [
         "transient": true,
@@ -410,7 +411,7 @@ public func makeTextBundle(
         try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: modUnix)],
                              ofItemAtPath: bundlePath.path)
     } catch {
-        try? fm.removeItem(at: tmpBundle)
+        // defer block handles cleanup of tmpBundle
     }
 }
 

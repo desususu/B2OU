@@ -30,7 +30,7 @@ extension NSRegularExpression {
         var result = string
         // Process matches in reverse order to preserve indices
         for match in matches.reversed() {
-            let matchRange = Range(match.range, in: result)!
+            guard let matchRange = Range(match.range, in: result) else { continue }
             let replacement = block(match, result)
             result.replaceSubrange(matchRange, with: replacement)
         }
@@ -179,6 +179,9 @@ private func sanitizeDirName(_ name: String) -> String {
     result = reMultipleUnderscores.replaceAll(in: result, with: "_")
     result = result.trimmingCharacters(in: .whitespaces)
     result = result.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+    // Prevent path traversal: strip ".." components
+    let components = result.components(separatedBy: "/").filter { $0 != ".." && $0 != "." }
+    result = components.joined(separator: "/")
     return result
 }
 

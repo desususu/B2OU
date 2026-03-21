@@ -577,6 +577,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         value.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
+            .replacingOccurrences(of: "\0", with: "")
     }
 
     private func updateIconState(_ state: String) {
@@ -661,12 +664,12 @@ class ExportWatcher {
 
     var paused: Bool {
         get { lock.lock(); defer { lock.unlock() }; return _paused }
-        set { lock.lock(); _paused = newValue; lock.unlock() }
+        set { lock.lock(); defer { lock.unlock() }; _paused = newValue }
     }
 
     private var running: Bool {
         get { lock.lock(); defer { lock.unlock() }; return _running }
-        set { lock.lock(); _running = newValue; lock.unlock() }
+        set { lock.lock(); defer { lock.unlock() }; _running = newValue }
     }
 
     init(config: ExportConfig, onUpdate: ((Int, String?) -> Void)? = nil) {
@@ -769,8 +772,8 @@ class ExportWatcher {
             // Set restrictive permissions on backup file
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destPath.path)
             lock.lock()
+            defer { lock.unlock() }
             _lastBackupTime = Date()
-            lock.unlock()
             rotateBackups(in: backupDir)
         } catch {
             // Backup failed silently — will retry next interval
@@ -822,9 +825,9 @@ class ExportWatcher {
                 totalCount = max(totalCount, result.noteCount)
             }
             lock.lock()
+            defer { lock.unlock() }
             _noteCount = totalCount
             _lastExportTime = Date()
-            lock.unlock()
         } catch {
             errorMsg = error.localizedDescription
         }
