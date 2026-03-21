@@ -289,8 +289,12 @@ public func processExportImagesTextbundle(
 
     func linkOrCopy(src: URL, dest: URL) {
         try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-        do { try fm.linkItem(at: src, to: dest); return } catch {}
-        do { try fm.copyItem(at: src, to: dest) } catch {}
+        do {
+            try fm.linkItem(at: src, to: dest)
+        } catch {
+            // Hard link failed (e.g. cross-device); fall back to copy
+            try? fm.copyItem(at: src, to: dest)
+        }
     }
 
     func copyTBAsset(source: URL?, dest: URL) {
