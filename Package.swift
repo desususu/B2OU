@@ -31,6 +31,7 @@ let package = Package(
             dependencies: ["B2OUCore"],
             linkerSettings: [
                 .linkedFramework("Cocoa"),
+                .linkedFramework("WebKit"),
             ]
         ),
         .testTarget(

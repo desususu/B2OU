@@ -27,6 +27,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var langZhItem: NSMenuItem!
     private var quitItem: NSMenuItem!
 
+    // Dashboard / Preview
+    private var dashboardItem: NSMenuItem!
+    private var browseItem: NSMenuItem!
+
     // State
     private var config: ExportConfig?
     private var profiles: [String: ExportConfig] = [:]
@@ -34,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var watcher: ExportWatcher?
     private var isPaused = false
     private var statusTimer: Timer?
+    private var noteStore = NoteStore()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = initLanguage()
@@ -107,6 +112,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         openFolderItem = NSMenuItem(title: t("menu.open_folder"), action: #selector(onOpenFolder), keyEquivalent: "")
         openFolderItem.target = self
         menu.addItem(openFolderItem)
+
+        dashboardItem = NSMenuItem(title: t("menu.dashboard"), action: #selector(onDashboard), keyEquivalent: "d")
+        dashboardItem.target = self
+        menu.addItem(dashboardItem)
+
+        browseItem = NSMenuItem(title: t("menu.browse_notes"), action: #selector(onBrowseNotes), keyEquivalent: "b")
+        browseItem.target = self
+        menu.addItem(browseItem)
 
         menu.addItem(.separator())
 
@@ -286,6 +299,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func onOpenFolder() {
         guard let cfg = config else { runSetupWizard(); return }
         NSWorkspace.shared.open(cfg.exportPath)
+    }
+
+    @objc private func onDashboard() {
+        guard config != nil else { runSetupWizard(); return }
+        scanAndRun { [weak self] in
+            guard let self else { return }
+            showDashboard(store: self.noteStore)
+        }
+    }
+
+    @objc private func onBrowseNotes() {
+        guard config != nil else { runSetupWizard(); return }
+        scanAndRun { [weak self] in
+            guard let self else { return }
+            showNotePreview(store: self.noteStore)
+        }
+    }
+
+    private func scanAndRun(_ action: @escaping () -> Void) {
+        guard let cfg = config else { return }
+        Thread.detachNewThread { [weak self] in
+            self?.noteStore.scan(exportPath: cfg.exportPath)
+            DispatchQueue.main.async { action() }
+        }
     }
 
     @objc private func onSetup() { runSetupWizard() }
@@ -571,6 +608,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         exportNowItem.title = t("menu.export_now")
         pauseItem.title = isPaused ? t("menu.resume") : t("menu.pause")
         openFolderItem.title = t("menu.open_folder")
+        dashboardItem.title = t("menu.dashboard")
+        browseItem.title = t("menu.browse_notes")
         profileMenu.title = t("menu.profile")
         loginItem.title = t("menu.start_at_login")
         changeFolderItem.title = t("menu.change_folder")
