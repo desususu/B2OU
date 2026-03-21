@@ -1,9 +1,9 @@
 // NotePreviewWindow.swift — Note browser with Markdown preview, typography controls,
-// and day/night mode toggle.
+// day/night mode, split-screen source view, and sort options.
 //
-// Provides a split-view window: searchable note list on the left, rendered Markdown
-// preview on the right via WKWebView. Users can customize font, size, line spacing,
-// and switch between light/dark themes.
+// Provides a three-pane layout: searchable/sortable note list on the left, and a
+// content area on the right that can show rendered preview, raw source, or both
+// side-by-side. Fonts are detected from the system so all installed fonts appear.
 
 import Cocoa
 import WebKit
@@ -11,11 +11,28 @@ import B2OUCore
 
 // MARK: - Layout Constants
 
-private let previewWidth:  CGFloat = 960
-private let previewHeight: CGFloat = 640
-private let sidebarWidth:  CGFloat = 240
-private let toolbarH:      CGFloat = 36
+private let previewWidth:  CGFloat = 1020
+private let previewHeight: CGFloat = 660
+private let sidebarWidth:  CGFloat = 260
+private let toolbarH:      CGFloat = 38
 private let bottomBarH:    CGFloat = 32
+
+// MARK: - Sort Mode
+
+private enum SortMode: Int {
+    case title = 0
+    case dateModified = 1
+    case dateCreated = 2
+    case wordCount = 3
+}
+
+// MARK: - View Mode
+
+private enum ViewMode: Int {
+    case preview = 0
+    case source = 1
+    case split = 2
+}
 
 // MARK: - Preview Controller
 
@@ -30,6 +47,14 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
     private var searchField: NSSearchField?
     private var wordCountLabel: NSTextField?
     private var openBearBtn: NSButton?
+    private var sortPopup: NSPopUpButton?
+
+    // Split-screen
+    private var contentContainer: NSView?
+    private var sourceScrollView: NSScrollView?
+    private var sourceTextView: NSTextView?
+    private var splitDivider: NSView?
+    private var viewMode: ViewMode = .preview
 
     // Typography state
     private var fontFamily = "-apple-system, BlinkMacSystemFont, sans-serif"
@@ -37,20 +62,24 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
     private var lineSpacing: CGFloat = 1.6
     private var isDarkMode = false
 
-    private let fontOptions: [(label: String, css: String)] = [
-        ("System",   "-apple-system, BlinkMacSystemFont, sans-serif"),
-        ("Menlo",    "'Menlo', monospace"),
-        ("Georgia",  "'Georgia', serif"),
-        ("Palatino", "'Palatino', serif"),
-    ]
-    private let sizeOptions: [CGFloat] = [12, 13, 14, 15, 16, 18, 20]
+    // Dynamically populated from system
+    private var fontOptions: [(label: String, css: String)] = []
+    private let sizeOptions: [CGFloat] = [12, 13, 14, 15, 16, 18, 20, 24]
     private let spacingOptions: [CGFloat] = [1.0, 1.2, 1.4, 1.5, 1.6, 1.8, 2.0]
+
+    private var sortMode: SortMode = .dateModified
+
+    // Date formatter for sidebar cells
+    private let cellDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f
+    }()
 
     func show(store: NoteStore) {
         self.store = store
-        filteredNotes = store.notes.sorted {
-            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-        }
+        applySort()
 
         if let window, window.isVisible {
             tableView?.reloadData()
@@ -59,14 +88,85 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
             return
         }
 
+        fontOptions = Self.detectFonts()
         buildWindow()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func close() {
+        NotificationCenter.default.removeObserver(self)
         window?.close()
         window = nil
+    }
+
+    // MARK: - Font Detection
+
+    private static func detectFonts() -> [(label: String, css: String)] {
+        let available = Set(NSFontManager.shared.availableFontFamilies)
+
+        let candidates: [(label: String, css: String, check: String?)] = [
+            // Sans-serif
+            ("System",          "-apple-system, BlinkMacSystemFont, sans-serif", nil),
+            ("Helvetica Neue",  "'Helvetica Neue', sans-serif",                  "Helvetica Neue"),
+            ("Avenir",          "'Avenir', sans-serif",                          "Avenir"),
+            ("Avenir Next",     "'Avenir Next', sans-serif",                     "Avenir Next"),
+            ("Futura",          "'Futura', sans-serif",                          "Futura"),
+            ("Gill Sans",       "'Gill Sans', sans-serif",                       "Gill Sans"),
+            ("Optima",          "'Optima', sans-serif",                          "Optima"),
+            // Serif
+            ("Georgia",         "'Georgia', serif",                              "Georgia"),
+            ("Palatino",        "'Palatino', serif",                             "Palatino"),
+            ("Baskerville",     "'Baskerville', serif",                          "Baskerville"),
+            ("Hoefler Text",    "'Hoefler Text', serif",                         "Hoefler Text"),
+            ("Times New Roman", "'Times New Roman', serif",                      "Times New Roman"),
+            ("Cochin",          "'Cochin', serif",                               "Cochin"),
+            ("Charter",         "'Charter', serif",                              "Charter"),
+            ("Iowan Old Style", "'Iowan Old Style', serif",                      "Iowan Old Style"),
+            ("Literata",        "'Literata', serif",                             "Literata"),
+            ("American Typewriter", "'American Typewriter', serif",              "American Typewriter"),
+            // Monospace
+            ("Menlo",           "'Menlo', monospace",                            "Menlo"),
+            ("Monaco",          "'Monaco', monospace",                           "Monaco"),
+            ("SF Mono",         "'SF Mono', 'SFMono-Regular', monospace",        "SF Mono"),
+            ("Courier New",     "'Courier New', monospace",                      "Courier New"),
+            ("Source Code Pro",  "'Source Code Pro', monospace",                  "Source Code Pro"),
+            ("Fira Code",       "'Fira Code', monospace",                        "Fira Code"),
+            ("JetBrains Mono",  "'JetBrains Mono', monospace",                   "JetBrains Mono"),
+            ("IBM Plex Mono",   "'IBM Plex Mono', monospace",                    "IBM Plex Mono"),
+            ("Cascadia Code",   "'Cascadia Code', monospace",                    "Cascadia Code"),
+        ]
+
+        return candidates.filter { $0.check == nil || available.contains($0.check!) }
+            .map { (label: $0.label, css: $0.css) }
+    }
+
+    // MARK: - Sort
+
+    private func applySort() {
+        guard let store else { return }
+        let query = searchField?.stringValue.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
+        var notes = store.notes
+
+        if !query.isEmpty {
+            notes = notes.filter { note in
+                note.title.lowercased().contains(query)
+                    || note.tags.contains { $0.lowercased().contains(query) }
+            }
+        }
+
+        switch sortMode {
+        case .title:
+            notes.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        case .dateModified:
+            notes.sort { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+        case .dateCreated:
+            notes.sort { ($0.created ?? .distantPast) > ($1.created ?? .distantPast) }
+        case .wordCount:
+            notes.sort { $0.wordCount > $1.wordCount }
+        }
+
+        filteredNotes = notes
     }
 
     // MARK: - Build Window
@@ -78,7 +178,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         window?.title = t("preview.title")
         window?.center()
         window?.isReleasedWhenClosed = false
-        window?.minSize = NSSize(width: 640, height: 400)
+        window?.minSize = NSSize(width: 700, height: 420)
 
         guard let content = window?.contentView else { return }
         content.wantsLayer = true
@@ -94,64 +194,83 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         toolbar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         content.addSubview(toolbar)
 
+        // Horizontal divider under toolbar
+        let toolDiv = NSView(frame: NSRect(x: 0, y: 0, width: cw, height: 1))
+        toolDiv.wantsLayer = true
+        toolDiv.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        toolDiv.autoresizingMask = [.width]
+        toolbar.addSubview(toolDiv)
+
         var tx: CGFloat = 12
 
         // Font popup
         let fontLabel = NSTextField(labelWithString: t("preview.font"))
-        fontLabel.frame = NSRect(x: tx, y: 8, width: 32, height: 18)
+        fontLabel.frame = NSRect(x: tx, y: 10, width: 30, height: 18)
         fontLabel.font = NSFont.systemFont(ofSize: 11)
         toolbar.addSubview(fontLabel)
-        tx += 34
+        tx += 32
 
-        let fontPopup = NSPopUpButton(frame: NSRect(x: tx, y: 4, width: 110, height: 24), pullsDown: false)
+        let fontPopup = NSPopUpButton(frame: NSRect(x: tx, y: 6, width: 140, height: 24), pullsDown: false)
         fontPopup.font = NSFont.systemFont(ofSize: 11)
         for opt in fontOptions { fontPopup.addItem(withTitle: opt.label) }
         fontPopup.target = self
         fontPopup.action = #selector(onFontChanged(_:))
         toolbar.addSubview(fontPopup)
-        tx += 118
+        tx += 146
 
         // Size popup
         let sizeLabel = NSTextField(labelWithString: t("preview.size"))
-        sizeLabel.frame = NSRect(x: tx, y: 8, width: 28, height: 18)
+        sizeLabel.frame = NSRect(x: tx, y: 10, width: 26, height: 18)
         sizeLabel.font = NSFont.systemFont(ofSize: 11)
         toolbar.addSubview(sizeLabel)
-        tx += 30
+        tx += 28
 
-        let sizePopup = NSPopUpButton(frame: NSRect(x: tx, y: 4, width: 60, height: 24), pullsDown: false)
+        let sizePopup = NSPopUpButton(frame: NSRect(x: tx, y: 6, width: 56, height: 24), pullsDown: false)
         sizePopup.font = NSFont.systemFont(ofSize: 11)
         for s in sizeOptions { sizePopup.addItem(withTitle: "\(Int(s))") }
         if let idx = sizeOptions.firstIndex(of: fontSize) { sizePopup.selectItem(at: idx) }
         sizePopup.target = self
         sizePopup.action = #selector(onSizeChanged(_:))
         toolbar.addSubview(sizePopup)
-        tx += 68
+        tx += 60
 
         // Spacing popup
         let spacingLabel = NSTextField(labelWithString: t("preview.spacing"))
-        spacingLabel.frame = NSRect(x: tx, y: 8, width: 42, height: 18)
+        spacingLabel.frame = NSRect(x: tx, y: 10, width: 40, height: 18)
         spacingLabel.font = NSFont.systemFont(ofSize: 11)
         toolbar.addSubview(spacingLabel)
-        tx += 44
+        tx += 42
 
-        let spacingPopup = NSPopUpButton(frame: NSRect(x: tx, y: 4, width: 60, height: 24), pullsDown: false)
+        let spacingPopup = NSPopUpButton(frame: NSRect(x: tx, y: 6, width: 56, height: 24), pullsDown: false)
         spacingPopup.font = NSFont.systemFont(ofSize: 11)
         for s in spacingOptions { spacingPopup.addItem(withTitle: String(format: "%.1f", s)) }
         if let idx = spacingOptions.firstIndex(of: lineSpacing) { spacingPopup.selectItem(at: idx) }
         spacingPopup.target = self
         spacingPopup.action = #selector(onSpacingChanged(_:))
         toolbar.addSubview(spacingPopup)
-        tx += 68
+        tx += 62
 
-        // Day/Night segmented control
+        // Day/Night toggle
         let themeControl = NSSegmentedControl(labels: [t("preview.day_mode"), t("preview.night_mode")],
                                              trackingMode: .selectOne,
                                              target: self,
                                              action: #selector(onThemeChanged(_:)))
-        themeControl.frame = NSRect(x: tx + 12, y: 5, width: 120, height: 22)
+        themeControl.frame = NSRect(x: tx + 8, y: 7, width: 110, height: 22)
         themeControl.font = NSFont.systemFont(ofSize: 11)
         themeControl.selectedSegment = 0
         toolbar.addSubview(themeControl)
+        tx += 126
+
+        // View mode: Preview / Source / Split
+        let viewControl = NSSegmentedControl(
+            labels: [t("preview.mode_preview"), t("preview.mode_source"), t("preview.mode_split")],
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(onViewModeChanged(_:)))
+        viewControl.frame = NSRect(x: tx + 8, y: 7, width: 160, height: 22)
+        viewControl.font = NSFont.systemFont(ofSize: 11)
+        viewControl.selectedSegment = 0
+        toolbar.addSubview(viewControl)
 
         // ── Sidebar ─────────────────────────────────────────────
 
@@ -162,8 +281,25 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         sidebarView.autoresizingMask = [.height]
         content.addSubview(sidebarView)
 
+        // Sort popup
+        var sy = sideH - 30
+        sortPopup = NSPopUpButton(frame: NSRect(x: 8, y: sy, width: sidebarWidth - 16, height: 22), pullsDown: false)
+        sortPopup?.font = NSFont.systemFont(ofSize: 11)
+        sortPopup?.addItems(withTitles: [
+            t("preview.sort_title"),
+            t("preview.sort_modified"),
+            t("preview.sort_created"),
+            t("preview.sort_words"),
+        ])
+        sortPopup?.selectItem(at: sortMode.rawValue)
+        sortPopup?.target = self
+        sortPopup?.action = #selector(onSortChanged(_:))
+        sortPopup?.autoresizingMask = [.minYMargin, .width]
+        sidebarView.addSubview(sortPopup!)
+
         // Search field
-        searchField = NSSearchField(frame: NSRect(x: 8, y: sideH - 30, width: sidebarWidth - 16, height: 24))
+        sy -= 28
+        searchField = NSSearchField(frame: NSRect(x: 8, y: sy, width: sidebarWidth - 16, height: 24))
         searchField?.font = NSFont.systemFont(ofSize: 12)
         searchField?.placeholderString = t("preview.search")
         searchField?.target = self
@@ -172,17 +308,18 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         sidebarView.addSubview(searchField!)
 
         // Table view in scroll view
-        let tableScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: sidebarWidth, height: sideH - 36))
+        let tableScrollH = sy - 4
+        let tableScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: sidebarWidth, height: tableScrollH))
         tableScroll.autoresizingMask = [.height, .width]
         tableScroll.hasVerticalScroller = true
         tableScroll.drawsBackground = false
 
         tableView = NSTableView()
         tableView?.headerView = nil
-        tableView?.rowHeight = 28
+        tableView?.rowHeight = 40
         tableView?.intercellSpacing = NSSize(width: 0, height: 1)
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("title"))
-        col.width = sidebarWidth - 20
+        col.width = sidebarWidth - 4
         tableView?.addTableColumn(col)
         tableView?.dataSource = self
         tableView?.delegate = self
@@ -197,14 +334,42 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         divider.autoresizingMask = [.height]
         content.addSubview(divider)
 
-        // ── Content Pane ────────────────────────────────────────
+        // ── Content Container ───────────────────────────────────
 
         let contentX = sidebarWidth + 1
         let contentW = cw - contentX
+        contentContainer = NSView(frame: NSRect(x: contentX, y: sideY, width: contentW, height: sideH))
+        contentContainer?.autoresizingMask = [.width, .height]
+        content.addSubview(contentContainer!)
 
-        webView = WKWebView(frame: NSRect(x: contentX, y: sideY, width: contentW, height: sideH))
-        webView?.autoresizingMask = [.width, .height]
-        content.addSubview(webView!)
+        // WebView
+        webView = WKWebView(frame: contentContainer!.bounds)
+        contentContainer?.addSubview(webView!)
+
+        // Source text view
+        sourceScrollView = NSScrollView(frame: contentContainer!.bounds)
+        sourceScrollView?.hasVerticalScroller = true
+        sourceScrollView?.drawsBackground = true
+
+        sourceTextView = NSTextView(frame: contentContainer!.bounds)
+        sourceTextView?.isEditable = false
+        sourceTextView?.isSelectable = true
+        sourceTextView?.font = NSFont(name: "Menlo", size: 13) ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        sourceTextView?.textContainerInset = NSSize(width: 16, height: 16)
+        sourceTextView?.isAutomaticQuoteSubstitutionEnabled = false
+        sourceTextView?.isAutomaticDashSubstitutionEnabled = false
+        sourceTextView?.backgroundColor = .textBackgroundColor
+        sourceTextView?.textColor = .textColor
+        sourceScrollView?.documentView = sourceTextView
+        contentContainer?.addSubview(sourceScrollView!)
+        sourceScrollView?.isHidden = true
+
+        // Split divider
+        splitDivider = NSView(frame: NSRect(x: 0, y: 0, width: 1, height: sideH))
+        splitDivider?.wantsLayer = true
+        splitDivider?.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        contentContainer?.addSubview(splitDivider!)
+        splitDivider?.isHidden = true
 
         // Load empty state
         let emptyHTML = wrapInHTML("<p style=\"color:#999;text-align:center;margin-top:40%\">\(t("preview.no_selection"))</p>")
@@ -218,7 +383,6 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         bottomBar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         content.addSubview(bottomBar)
 
-        // Horizontal divider
         let hDiv = NSView(frame: NSRect(x: 0, y: bottomBarH - 1, width: cw, height: 1))
         hDiv.wantsLayer = true
         hDiv.layer?.backgroundColor = NSColor.separatorColor.cgColor
@@ -226,7 +390,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         bottomBar.addSubview(hDiv)
 
         wordCountLabel = NSTextField(labelWithString: "")
-        wordCountLabel?.frame = NSRect(x: 12, y: 6, width: 200, height: 18)
+        wordCountLabel?.frame = NSRect(x: 12, y: 6, width: 300, height: 18)
         wordCountLabel?.font = NSFont.systemFont(ofSize: 11)
         wordCountLabel?.textColor = .secondaryLabelColor
         bottomBar.addSubview(wordCountLabel!)
@@ -248,6 +412,41 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         openBearBtn?.action = #selector(onOpenBear)
         openBearBtn?.autoresizingMask = [.minXMargin]
         bottomBar.addSubview(openBearBtn!)
+
+        // Observe window resize for split-mode layout
+        NotificationCenter.default.addObserver(self, selector: #selector(onWindowResize),
+                                              name: NSWindow.didResizeNotification, object: window)
+
+        updateViewLayout()
+    }
+
+    // MARK: - View Mode Layout
+
+    private func updateViewLayout() {
+        guard let container = contentContainer else { return }
+        let w = container.bounds.width
+        let h = container.bounds.height
+
+        switch viewMode {
+        case .preview:
+            sourceScrollView?.isHidden = true
+            splitDivider?.isHidden = true
+            webView?.isHidden = false
+            webView?.frame = NSRect(x: 0, y: 0, width: w, height: h)
+        case .source:
+            sourceScrollView?.isHidden = false
+            splitDivider?.isHidden = true
+            webView?.isHidden = true
+            sourceScrollView?.frame = NSRect(x: 0, y: 0, width: w, height: h)
+        case .split:
+            let halfW = floor(w / 2)
+            sourceScrollView?.isHidden = false
+            splitDivider?.isHidden = false
+            webView?.isHidden = false
+            sourceScrollView?.frame = NSRect(x: 0, y: 0, width: halfW - 1, height: h)
+            splitDivider?.frame = NSRect(x: halfW - 1, y: 0, width: 1, height: h)
+            webView?.frame = NSRect(x: halfW, y: 0, width: w - halfW, height: h)
+        }
     }
 
     // MARK: - Table View Data Source
@@ -258,16 +457,52 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let id = NSUserInterfaceItemIdentifier("NoteCell")
-        let cell: NSTextField
-        if let reused = tableView.makeView(withIdentifier: id, owner: self) as? NSTextField {
+
+        let cell: NSView
+        let titleField: NSTextField
+        let subtitleField: NSTextField
+
+        if let reused = tableView.makeView(withIdentifier: id, owner: self) {
             cell = reused
+            titleField = reused.viewWithTag(1) as! NSTextField
+            subtitleField = reused.viewWithTag(2) as! NSTextField
         } else {
-            cell = NSTextField(labelWithString: "")
+            cell = NSView()
             cell.identifier = id
-            cell.lineBreakMode = .byTruncatingTail
-            cell.font = NSFont.systemFont(ofSize: 12)
+
+            let tf = NSTextField(labelWithString: "")
+            tf.tag = 1
+            tf.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+            tf.lineBreakMode = .byTruncatingTail
+            tf.frame = NSRect(x: 8, y: 20, width: sidebarWidth - 20, height: 16)
+            tf.autoresizingMask = [.width]
+            cell.addSubview(tf)
+            titleField = tf
+
+            let sf = NSTextField(labelWithString: "")
+            sf.tag = 2
+            sf.font = NSFont.systemFont(ofSize: 10)
+            sf.textColor = .secondaryLabelColor
+            sf.lineBreakMode = .byTruncatingTail
+            sf.frame = NSRect(x: 8, y: 4, width: sidebarWidth - 20, height: 14)
+            sf.autoresizingMask = [.width]
+            cell.addSubview(sf)
+            subtitleField = sf
         }
-        cell.stringValue = filteredNotes[row].title
+
+        let note = filteredNotes[row]
+        titleField.stringValue = note.title
+
+        var parts: [String] = []
+        if let mod = note.modified {
+            parts.append(cellDateFormatter.string(from: mod))
+        }
+        parts.append(formatWordCount(note.wordCount))
+        if !note.tags.isEmpty {
+            parts.append(note.tags.prefix(2).joined(separator: ", "))
+        }
+        subtitleField.stringValue = parts.joined(separator: "  \u{00b7}  ")
+
         return cell
     }
 
@@ -288,10 +523,18 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
     private func loadNote(_ note: NoteMetadata) {
         guard let content = try? String(contentsOf: note.filePath, encoding: .utf8) else { return }
         let body = stripFrontMatter(content)
+
+        // Always update both views
         let html = wrapInHTML(markdownToHTML(body))
         webView?.loadHTMLString(html, baseURL: note.filePath.deletingLastPathComponent())
+        sourceTextView?.string = body
 
-        wordCountLabel?.stringValue = "\(note.wordCount) \(t("preview.words"))"
+        // Status bar
+        var info = "\(note.wordCount) \(t("preview.words"))"
+        if let mod = note.modified {
+            info += "  \u{00b7}  " + cellDateFormatter.string(from: mod)
+        }
+        wordCountLabel?.stringValue = info
         openBearBtn?.isHidden = note.bearId.isEmpty
     }
 
@@ -303,22 +546,13 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
     // MARK: - Actions
 
     @objc private func onSearch(_ sender: NSSearchField) {
-        let query = sender.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        guard let store else { return }
+        applySort()
+        tableView?.reloadData()
+    }
 
-        if query.isEmpty {
-            filteredNotes = store.notes.sorted {
-                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
-        } else {
-            filteredNotes = store.notes.filter { note in
-                note.title.lowercased().contains(query)
-                    || note.tags.contains { $0.lowercased().contains(query) }
-            }.sorted {
-                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
-        }
-
+    @objc private func onSortChanged(_ sender: NSPopUpButton) {
+        sortMode = SortMode(rawValue: sender.indexOfSelectedItem) ?? .dateModified
+        applySort()
         tableView?.reloadData()
     }
 
@@ -348,6 +582,15 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         refreshPreview()
     }
 
+    @objc private func onViewModeChanged(_ sender: NSSegmentedControl) {
+        viewMode = ViewMode(rawValue: sender.selectedSegment) ?? .preview
+        updateViewLayout()
+    }
+
+    @objc private func onWindowResize(_ notification: Notification) {
+        updateViewLayout()
+    }
+
     @objc private func onOpenEditor() {
         guard let note = selectedNote else { return }
         NSWorkspace.shared.open(note.filePath)
@@ -357,6 +600,15 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         guard let note = selectedNote, !note.bearId.isEmpty,
               let url = URL(string: "bear://x-callback-url/open-note?id=\(note.bearId)") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    // MARK: - Helpers
+
+    private func formatWordCount(_ n: Int) -> String {
+        if n >= 1000 {
+            return String(format: "%.1fk \(t("preview.words"))", Double(n) / 1000.0)
+        }
+        return "\(n) \(t("preview.words"))"
     }
 
     // MARK: - Markdown → HTML
@@ -515,7 +767,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     // MARK: - HTML Wrapper
 
-    func wrapInHTML(_ body: String) -> String {
+    private func wrapInHTML(_ body: String) -> String {
         let bg = isDarkMode ? "#1e1e1e" : "#ffffff"
         let fg = isDarkMode ? "#e0e0e0" : "#1d1d1f"
         let codeBg = isDarkMode ? "#2d2d2d" : "#f5f5f5"

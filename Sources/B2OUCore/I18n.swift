@@ -187,6 +187,13 @@ public let strings: [String: [String: String]] = [
         "preview.night_mode": "Night",
         "preview.words": "words",
         "preview.no_selection": "Select a note to preview",
+        "preview.sort_title": "Sort: Title",
+        "preview.sort_modified": "Sort: Date Modified",
+        "preview.sort_created": "Sort: Date Created",
+        "preview.sort_words": "Sort: Word Count",
+        "preview.mode_preview": "Preview",
+        "preview.mode_source": "Source",
+        "preview.mode_split": "Split",
 
         // Help text
         "help.backup_interval": "Periodically create a snapshot of the Bear database as a standalone SQLite file.\n\nBackups are lightweight and run in the background without interfering with exports. Old backups are automatically rotated (up to 24 kept).\n\nThe backup folder is set to .b2ou-backups inside the export folder by default.",
@@ -323,6 +330,13 @@ public let strings: [String: [String: String]] = [
         "preview.night_mode": "\u{591c}\u{95f4}",
         "preview.words": "\u{5b57}",
         "preview.no_selection": "\u{9009}\u{62e9}\u{4e00}\u{7bc7}\u{7b14}\u{8bb0}\u{4ee5}\u{9884}\u{89c8}",
+        "preview.sort_title": "\u{6392}\u{5e8f}: \u{6807}\u{9898}",
+        "preview.sort_modified": "\u{6392}\u{5e8f}: \u{4fee}\u{6539}\u{65e5}\u{671f}",
+        "preview.sort_created": "\u{6392}\u{5e8f}: \u{521b}\u{5efa}\u{65e5}\u{671f}",
+        "preview.sort_words": "\u{6392}\u{5e8f}: \u{5b57}\u{6570}",
+        "preview.mode_preview": "\u{9884}\u{89c8}",
+        "preview.mode_source": "\u{6e90}\u{7801}",
+        "preview.mode_split": "\u{5206}\u{5c4f}",
 
         "help.backup_interval": "\u{5b9a}\u{671f}\u{5c06} Bear \u{6570}\u{636e}\u{5e93}\u{521b}\u{5efa}\u{4e3a}\u{72ec}\u{7acb}\u{7684} SQLite \u{5feb}\u{7167}\u{6587}\u{4ef6}\u{3002}\n\n\u{5907}\u{4efd}\u{8f7b}\u{91cf}\u{8fd0}\u{884c}\u{ff0c}\u{4e0d}\u{4f1a}\u{5f71}\u{54cd}\u{5bfc}\u{51fa}\u{3002}\u{65e7}\u{5907}\u{4efd}\u{81ea}\u{52a8}\u{8f6e}\u{6362}\u{ff08}\u{6700}\u{591a}\u{4fdd}\u{7559} 24 \u{4efd}\u{ff09}\u{3002}\n\n\u{5907}\u{4efd}\u{6587}\u{4ef6}\u{5939}\u{9ed8}\u{8ba4}\u{4e3a}\u{5bfc}\u{51fa}\u{6587}\u{4ef6}\u{5939}\u{4e2d}\u{7684} .b2ou-backups\u{3002}",
         "help.format": "Markdown (.md): \u{7eaf} Markdown \u{6587}\u{4ef6}\u{ff0c}\u{56fe}\u{7247}\u{5b58}\u{653e}\u{5728}\u{5171}\u{4eab}\u{6587}\u{4ef6}\u{5939}\u{4e2d}\u{3002}\u{9002}\u{5408} Obsidian\u{3002}\n\nTextBundle (.textbundle): \u{6bcf}\u{7bc7}\u{7b14}\u{8bb0}\u{5305}\u{542b}\u{5185}\u{5d4c}\u{56fe}\u{7247}\u{3002}\u{9002}\u{5408} Ulysses\u{3002}\n\n\u{540c}\u{65f6}\u{5bfc}\u{51fa}: \u{9700}\u{5206}\u{522b}\u{4f7f}\u{7528} Markdown \u{548c} TextBundle \u{7684}\u{4e24}\u{4e2a}\u{6587}\u{4ef6}\u{5939}\u{3002}",
