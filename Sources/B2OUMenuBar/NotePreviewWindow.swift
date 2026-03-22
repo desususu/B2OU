@@ -95,6 +95,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     func close() {
         NotificationCenter.default.removeObserver(self)
+        if let tmp = tempHTMLFile { try? FileManager.default.removeItem(at: tmp) }
         window?.close()
         window = nil
     }
@@ -571,14 +572,32 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     // MARK: - Note Loading
 
+    /// Temporary HTML file for WebView preview (enables local image access).
+    private var tempHTMLFile: URL?
+
     private func loadNote(_ note: NoteMetadata) {
         guard let content = try? String(contentsOf: note.filePath, encoding: .utf8) else { return }
         let body = stripFrontMatter(content)
 
         // Always update both views
         let html = wrapInHTML(markdownToHTML(body))
-        webView?.loadHTMLString(html, baseURL: note.filePath.deletingLastPathComponent())
         sourceTextView?.string = body
+
+        // Write HTML to a temp file so WKWebView can access local images
+        // via loadFileURL with read access to the note's directory tree.
+        let noteDir = note.filePath.deletingLastPathComponent()
+        let tmpFile = noteDir.appendingPathComponent(".b2ou-preview.html")
+        do {
+            try html.write(to: tmpFile, atomically: true, encoding: .utf8)
+            // Grant read access to the export root (parent of note dir) so
+            // shared image folders are also accessible.
+            let accessRoot = noteDir.deletingLastPathComponent()
+            webView?.loadFileURL(tmpFile, allowingReadAccessTo: accessRoot)
+            tempHTMLFile = tmpFile
+        } catch {
+            // Fallback: loadHTMLString (images won't load but text works)
+            webView?.loadHTMLString(html, baseURL: noteDir)
+        }
 
         // Status bar
         var info = "\(note.wordCount) \(t("preview.words"))"

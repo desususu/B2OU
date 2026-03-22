@@ -68,7 +68,7 @@ typealias FolderPickerCallback = () -> String?
 // MARK: - Helpers
 
 private func makeCard(in parent: NSView, x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -> NSView {
-    let card = NSView(frame: NSRect(x: x, y: y, width: width, height: height))
+    let card = FlippedView(frame: NSRect(x: x, y: y, width: width, height: height))
     card.wantsLayer = true
     card.layer?.cornerRadius = cardRadius
     card.layer?.masksToBounds = true
