@@ -1,16 +1,16 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────────────────────
-# build_app.sh — Build B2OU.app as a standalone macOS application
+# build_app.sh — Build B2OU.app as a native macOS application
 #
-# Architecture: Swift menu-bar UI (~5MB RAM) + Python CLI backend.
-# The Swift app manages the menu bar and launches the Python CLI
-# as a subprocess for actual export work.
+# Pure Swift build — no Python runtime needed. Produces a single
+# lightweight .app bundle (~5 MB RAM at idle).
 #
 # Usage:
 #   ./build_app.sh          # Build the app
 #   ./build_app.sh clean    # Remove build artifacts
+#   ./build_app.sh cli      # Build CLI binary only
 #
-# Output: dist/B2OU.app
+# Output: dist/B2OU.app (and dist/b2ou for CLI)
 # ──────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -18,14 +18,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VENV_DIR=".build-venv"
 APP_NAME="B2OU"
+VERSION="7.0.0"
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 log()  { echo -e "${GREEN}[build]${NC} $*"; }
 warn() { echo -e "${YELLOW}[warn]${NC} $*"; }
@@ -34,7 +34,7 @@ err()  { echo -e "${RED}[error]${NC} $*" >&2; }
 # ── Clean mode ────────────────────────────────────────────────────────
 if [[ "${1:-}" == "clean" ]]; then
     log "Cleaning build artifacts..."
-    rm -rf build/ dist/ "$VENV_DIR" *.egg-info
+    rm -rf .build/ dist/
     rm -rf resources/icon.iconset
     log "Done."
     exit 0
@@ -46,40 +46,33 @@ if [[ "$(uname)" != "Darwin" ]]; then
     exit 1
 fi
 
-# ── Check Python version ─────────────────────────────────────────────
-PYTHON=""
-for candidate in python3.12 python3.11 python3.10 python3; do
-    if command -v "$candidate" &>/dev/null; then
-        ver=$("$candidate" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-        major=${ver%%.*}
-        minor=${ver##*.}
-        if (( major >= 3 && minor >= 10 )); then
-            PYTHON="$candidate"
-            break
-        fi
-    fi
-done
-
-if [[ -z "$PYTHON" ]]; then
-    err "Python 3.10+ is required.  Install it from https://www.python.org/downloads/"
+# ── Check Swift ─────────────────────────────────────────────────────
+if ! command -v swift &>/dev/null; then
+    err "Swift is required. Install Xcode or Xcode Command Line Tools:"
+    err "  xcode-select --install"
     exit 1
 fi
 
-log "Using Python: $PYTHON ($($PYTHON --version))"
+SWIFT_VER=$(swift --version 2>&1 | head -1)
+log "Using: $SWIFT_VER"
 
-# ── Create isolated build virtualenv ─────────────────────────────────
-if [[ ! -d "$VENV_DIR" ]]; then
-    log "Creating build virtualenv..."
-    "$PYTHON" -m venv "$VENV_DIR"
+# ── CLI-only mode ────────────────────────────────────────────────────
+if [[ "${1:-}" == "cli" ]]; then
+    log "Building CLI binary..."
+    swift build -c release --product b2ou
+    mkdir -p dist/
+    cp .build/release/b2ou dist/b2ou
+    strip -x dist/b2ou
+    log "Built: dist/b2ou ($(du -sh dist/b2ou | cut -f1))"
+    exit 0
 fi
 
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
+# ── Build all targets ────────────────────────────────────────────────
+log "Resolving Swift package dependencies..."
+swift package resolve
 
-log "Installing build dependencies..."
-pip install --upgrade pip setuptools wheel -q
-pip install pyinstaller -q
-pip install -e . -q
+log "Building release binaries..."
+swift build -c release
 
 # ── Build icon ───────────────────────────────────────────────────────
 if [[ -d resources/icons ]] && ! [[ -f resources/B2OU.icns ]]; then
@@ -106,31 +99,9 @@ if [[ -d resources/icons ]] && ! [[ -f resources/B2OU.icns ]]; then
         log "Created resources/B2OU.icns"
     else
         warn "iconutil not found — skipping .icns generation"
-        touch resources/B2OU.icns
     fi
     rm -rf resources/icon.iconset
 fi
-
-# ── Compile Swift menu-bar app ──────────────────────────────────────
-log "Compiling Swift menu-bar app..."
-mkdir -p build/
-
-swiftc -O -whole-module-optimization \
-    -o "build/$APP_NAME" \
-    swift/B2OUMenuBar.swift \
-    -framework Cocoa
-
-# Strip debug symbols to reduce binary size (~1-2 MB savings)
-strip -x "build/$APP_NAME"
-
-log "Swift binary: build/$APP_NAME ($(du -sh "build/$APP_NAME" | cut -f1))"
-
-# ── Build Python CLI with PyInstaller ────────────────────────────────
-log "Building Python CLI with PyInstaller..."
-python -m PyInstaller \
-    --noconfirm \
-    --clean \
-    B2OU-CLI.spec
 
 # ── Assemble .app bundle ────────────────────────────────────────────
 log "Assembling $APP_NAME.app bundle..."
@@ -143,32 +114,26 @@ RESOURCES="$CONTENTS/Resources"
 
 mkdir -p "$MACOS" "$RESOURCES"
 
-# Copy Swift binary as main executable
-cp "build/$APP_NAME" "$MACOS/$APP_NAME"
+# Copy the menu-bar binary as main executable
+cp ".build/release/B2OUMenuBar" "$MACOS/$APP_NAME"
+strip -x "$MACOS/$APP_NAME"
 
-# Copy PyInstaller-built CLI into the bundle
-if [[ -d "dist/b2ou-cli" ]]; then
-    cp -R "dist/b2ou-cli" "$MACOS/b2ou-cli-dist"
-    # Create a wrapper script that the Swift app calls
-    cat > "$MACOS/b2ou-cli" << 'WRAPPER'
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$DIR/b2ou-cli-dist/b2ou-cli" "$@"
-WRAPPER
-    chmod +x "$MACOS/b2ou-cli"
-fi
+# Copy CLI binary alongside (for `b2ou export` from terminal)
+mkdir -p dist/
+cp ".build/release/b2ou" dist/b2ou
+strip -x dist/b2ou
 
 # Copy icons
 if [[ -d resources/icons ]]; then
-    mkdir -p "$RESOURCES/resources/icons"
-    cp resources/icons/*.png "$RESOURCES/resources/icons/"
+    mkdir -p "$RESOURCES/icons"
+    cp resources/icons/*.png "$RESOURCES/icons/"
 fi
 if [[ -f resources/B2OU.icns ]]; then
     cp resources/B2OU.icns "$RESOURCES/B2OU.icns"
 fi
 
 # Write Info.plist
-cat > "$CONTENTS/Info.plist" << 'PLIST'
+cat > "$CONTENTS/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -181,9 +146,9 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <key>CFBundleIdentifier</key>
     <string>net.b2ou.app</string>
     <key>CFBundleVersion</key>
-    <string>6.1.0</string>
+    <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
-    <string>6.1.0</string>
+    <string>${VERSION}</string>
     <key>CFBundleExecutable</key>
     <string>B2OU</string>
     <key>CFBundleIconFile</key>
@@ -193,7 +158,7 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <key>NSHumanReadableCopyright</key>
     <string>MIT License</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.15</string>
+    <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
@@ -203,10 +168,17 @@ PLIST
 # ── Verify ───────────────────────────────────────────────────────────
 if [[ -d "$APP_PATH" ]]; then
     SIZE=$(du -sh "$APP_PATH" | cut -f1)
-    log "Built successfully: $APP_PATH ($SIZE)"
+    CLI_SIZE=$(du -sh dist/b2ou | cut -f1)
     log ""
-    log "To install:"
+    log "Build successful!"
+    log "  App:  $APP_PATH ($SIZE)"
+    log "  CLI:  dist/b2ou ($CLI_SIZE)"
+    log ""
+    log "To install the app:"
     log "  cp -r dist/$APP_NAME.app /Applications/"
+    log ""
+    log "To install the CLI:"
+    log "  cp dist/b2ou /usr/local/bin/"
     log ""
     log "To run now:"
     log "  open dist/$APP_NAME.app"
@@ -214,5 +186,3 @@ else
     err "Build failed — $APP_PATH not found"
     exit 1
 fi
-
-deactivate
