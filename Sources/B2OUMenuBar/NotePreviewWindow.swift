@@ -10,11 +10,11 @@ import B2OUCore
 
 // MARK: - Layout Constants
 
-private let previewWidth:  CGFloat = 1060
-private let previewHeight: CGFloat = 700
-private let sidebarWidth:  CGFloat = 280
+private let previewWidth:  CGFloat = 1100
+private let previewHeight: CGFloat = 720
+private let sidebarWidth:  CGFloat = 260
 private let toolbarH:      CGFloat = 40
-private let bottomBarH:    CGFloat = 34
+private let bottomBarH:    CGFloat = 36
 
 // MARK: - Sort Mode
 
@@ -274,72 +274,58 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         toolDiv.autoresizingMask = [.width]
         toolbar.addSubview(toolDiv)
 
-        var tx: CGFloat = sidebarWidth + 16
+        var tx: CGFloat = sidebarWidth + 14
 
-        // Font popup
-        let fontLabel = NSTextField(labelWithString: t("preview.font"))
-        fontLabel.frame = NSRect(x: tx, y: 12, width: 30, height: 16)
-        fontLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
-        fontLabel.textColor = .secondaryLabelColor
-        toolbar.addSubview(fontLabel)
-        tx += 30
-
-        let fontPopup = NSPopUpButton(frame: NSRect(x: tx, y: 8, width: 130, height: 22), pullsDown: false)
+        // Font popup (no label — popup title is self-explanatory)
+        let fontPopup = NSPopUpButton(frame: NSRect(x: tx, y: 9, width: 140, height: 22), pullsDown: false)
         fontPopup.controlSize = .small
         fontPopup.font = NSFont.systemFont(ofSize: 11)
         for opt in fontOptions { fontPopup.addItem(withTitle: opt.label) }
         fontPopup.target = self
         fontPopup.action = #selector(onFontChanged(_:))
         toolbar.addSubview(fontPopup)
-        tx += 138
+        tx += 146
 
         // Size popup
-        let sizeLabel = NSTextField(labelWithString: t("preview.size"))
-        sizeLabel.frame = NSRect(x: tx, y: 12, width: 26, height: 16)
-        sizeLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
-        sizeLabel.textColor = .secondaryLabelColor
-        toolbar.addSubview(sizeLabel)
-        tx += 26
-
-        let sizePopup = NSPopUpButton(frame: NSRect(x: tx, y: 8, width: 52, height: 22), pullsDown: false)
+        let sizePopup = NSPopUpButton(frame: NSRect(x: tx, y: 9, width: 52, height: 22), pullsDown: false)
         sizePopup.controlSize = .small
         sizePopup.font = NSFont.systemFont(ofSize: 11)
-        for s in sizeOptions { sizePopup.addItem(withTitle: "\(Int(s))") }
+        for s in sizeOptions { sizePopup.addItem(withTitle: "\(Int(s))pt") }
         if let idx = sizeOptions.firstIndex(of: fontSize) { sizePopup.selectItem(at: idx) }
         sizePopup.target = self
         sizePopup.action = #selector(onSizeChanged(_:))
         toolbar.addSubview(sizePopup)
-        tx += 58
+        tx += 56
 
         // Spacing popup
-        let spacingLabel = NSTextField(labelWithString: t("preview.spacing"))
-        spacingLabel.frame = NSRect(x: tx, y: 12, width: 42, height: 16)
-        spacingLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
-        spacingLabel.textColor = .secondaryLabelColor
-        toolbar.addSubview(spacingLabel)
-        tx += 42
-
-        let spacingPopup = NSPopUpButton(frame: NSRect(x: tx, y: 8, width: 52, height: 22), pullsDown: false)
+        let spacingPopup = NSPopUpButton(frame: NSRect(x: tx, y: 9, width: 54, height: 22), pullsDown: false)
         spacingPopup.controlSize = .small
         spacingPopup.font = NSFont.systemFont(ofSize: 11)
-        for s in spacingOptions { spacingPopup.addItem(withTitle: String(format: "%.1f", s)) }
+        for s in spacingOptions { spacingPopup.addItem(withTitle: String(format: "%.1f\u{00d7}", s)) }
         if let idx = spacingOptions.firstIndex(of: lineSpacing) { spacingPopup.selectItem(at: idx) }
         spacingPopup.target = self
         spacingPopup.action = #selector(onSpacingChanged(_:))
         toolbar.addSubview(spacingPopup)
         tx += 60
 
+        // Toolbar separator
+        let tbSep = NSView(frame: NSRect(x: tx + 2, y: 10, width: 1, height: 20))
+        tbSep.wantsLayer = true
+        tbSep.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
+        toolbar.addSubview(tbSep)
+        tx += 10
+
         // Day/Night toggle
         let themeControl = NSSegmentedControl(labels: [t("preview.day_mode"), t("preview.night_mode")],
                                              trackingMode: .selectOne,
                                              target: self,
                                              action: #selector(onThemeChanged(_:)))
-        themeControl.frame = NSRect(x: tx + 8, y: 9, width: 100, height: 22)
+        themeControl.frame = NSRect(x: tx, y: 9, width: 100, height: 22)
         themeControl.controlSize = .small
         themeControl.font = NSFont.systemFont(ofSize: 10)
         themeControl.selectedSegment = 0
         toolbar.addSubview(themeControl)
-        tx += 116
+        tx += 106
 
         // View mode: Preview / Source / Split
         let viewControl = NSSegmentedControl(
@@ -347,7 +333,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
             trackingMode: .selectOne,
             target: self,
             action: #selector(onViewModeChanged(_:)))
-        viewControl.frame = NSRect(x: tx + 8, y: 9, width: 150, height: 22)
+        viewControl.frame = NSRect(x: tx, y: 9, width: 150, height: 22)
         viewControl.controlSize = .small
         viewControl.font = NSFont.systemFont(ofSize: 10)
         viewControl.selectedSegment = 0
@@ -413,12 +399,13 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         bottomBar.addSubview(hDiv)
 
         wordCountLabel = NSTextField(labelWithString: "")
-        wordCountLabel?.frame = NSRect(x: 16, y: 8, width: 300, height: 16)
+        wordCountLabel?.frame = NSRect(x: 16, y: 10, width: 320, height: 16)
         wordCountLabel?.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         wordCountLabel?.textColor = .tertiaryLabelColor
+        wordCountLabel?.lineBreakMode = .byTruncatingTail
         bottomBar.addSubview(wordCountLabel!)
 
-        let openEditorBtn = NSButton(frame: NSRect(x: cw - 260, y: 5, width: 116, height: 24))
+        let openEditorBtn = NSButton(frame: NSRect(x: cw - 252, y: 6, width: 116, height: 24))
         openEditorBtn.title = t("preview.open_editor")
         openEditorBtn.bezelStyle = .rounded
         openEditorBtn.controlSize = .small
@@ -428,7 +415,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         openEditorBtn.autoresizingMask = [.minXMargin]
         bottomBar.addSubview(openEditorBtn)
 
-        openBearBtn = NSButton(frame: NSRect(x: cw - 134, y: 5, width: 116, height: 24))
+        openBearBtn = NSButton(frame: NSRect(x: cw - 130, y: 6, width: 116, height: 24))
         openBearBtn?.title = t("preview.open_bear")
         openBearBtn?.bezelStyle = .rounded
         openBearBtn?.controlSize = .small
@@ -499,7 +486,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
             tf.tag = 1
             tf.font = NSFont.systemFont(ofSize: 13, weight: .regular)
             tf.lineBreakMode = .byTruncatingTail
-            tf.frame = NSRect(x: 14, y: 26, width: sidebarWidth - 28, height: 18)
+            tf.frame = NSRect(x: 12, y: 26, width: sidebarWidth - 24, height: 18)
             tf.autoresizingMask = [.width]
             cell.addSubview(tf)
             titleField = tf
@@ -509,7 +496,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
             sf.font = NSFont.systemFont(ofSize: 10)
             sf.textColor = .tertiaryLabelColor
             sf.lineBreakMode = .byTruncatingTail
-            sf.frame = NSRect(x: 14, y: 8, width: sidebarWidth - 28, height: 14)
+            sf.frame = NSRect(x: 12, y: 8, width: sidebarWidth - 24, height: 14)
             sf.autoresizingMask = [.width]
             cell.addSubview(sf)
             subtitleField = sf

@@ -8,18 +8,18 @@ import B2OUCore
 
 // MARK: - Layout Constants
 
-private let winWidth:  CGFloat = 560
+private let winWidth:  CGFloat = 580
 private let winHeight: CGFloat = 900
 private let pad:       CGFloat = 28
 private let contentW:  CGFloat = winWidth - pad * 2
 private let rowH:      CGFloat = 30
 private let rowGap:    CGFloat = 6
-private let sectionGap: CGFloat = 20
+private let sectionGap: CGFloat = 18
 private let labelW:    CGFloat = 220
 private let infoSize:  CGFloat = 20
 private let toggleW:   CGFloat = 40
 private let toggleH:   CGFloat = 22
-private let cardPad:   CGFloat = 16
+private let cardPad:   CGFloat = 18
 private let cardRadius: CGFloat = 10
 
 // MARK: - Naming / Delete Keys
@@ -73,10 +73,12 @@ private func makeCard(in parent: NSView, x: CGFloat, y: CGFloat, width: CGFloat,
     card.layer?.cornerRadius = cardRadius
     card.layer?.masksToBounds = true
     if #available(macOS 14.0, *) {
-        card.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.06).cgColor
+        card.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.05).cgColor
     } else {
-        card.layer?.backgroundColor = NSColor(white: 0.5, alpha: 0.06).cgColor
+        card.layer?.backgroundColor = NSColor(white: 0.5, alpha: 0.05).cgColor
     }
+    card.layer?.borderWidth = 0.5
+    card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
     parent.addSubview(card)
     return card
 }
