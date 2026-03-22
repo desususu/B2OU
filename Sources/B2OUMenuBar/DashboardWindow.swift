@@ -29,12 +29,12 @@ private func makeCard(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) -
     card.layer?.cornerRadius = cardRadius
     card.layer?.masksToBounds = true
     if #available(macOS 14.0, *) {
-        card.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.05).cgColor
+        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6).cgColor
     } else {
-        card.layer?.backgroundColor = NSColor(white: 0.5, alpha: 0.05).cgColor
+        card.layer?.backgroundColor = NSColor(white: 0.95, alpha: 0.6).cgColor
     }
     card.layer?.borderWidth = 0.5
-    card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
+    card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.4).cgColor
     return card
 }
 

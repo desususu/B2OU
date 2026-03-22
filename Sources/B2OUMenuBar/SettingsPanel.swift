@@ -73,12 +73,12 @@ private func makeCard(in parent: NSView, x: CGFloat, y: CGFloat, width: CGFloat,
     card.layer?.cornerRadius = cardRadius
     card.layer?.masksToBounds = true
     if #available(macOS 14.0, *) {
-        card.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.05).cgColor
+        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6).cgColor
     } else {
-        card.layer?.backgroundColor = NSColor(white: 0.5, alpha: 0.05).cgColor
+        card.layer?.backgroundColor = NSColor(white: 0.95, alpha: 0.6).cgColor
     }
     card.layer?.borderWidth = 0.5
-    card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
+    card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.4).cgColor
     parent.addSubview(card)
     return card
 }
@@ -101,10 +101,10 @@ private func makeLabel(
     label.isSelectable = false
     if bold {
         label.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        label.textColor = .secondaryLabelColor
+        label.textColor = .labelColor
     } else if small {
         label.font = NSFont.systemFont(ofSize: 11)
-        label.textColor = .tertiaryLabelColor
+        label.textColor = .secondaryLabelColor
     } else {
         label.font = NSFont.systemFont(ofSize: 13)
         label.textColor = .labelColor
@@ -559,7 +559,7 @@ class SettingsPanelController: NSObject {
                 c.isEnabled = enabled
             }
             if let tf = ctl as? NSTextField {
-                tf.textColor = enabled ? .labelColor : .quaternaryLabelColor
+                tf.textColor = enabled ? .labelColor : .tertiaryLabelColor
             }
         }
     }

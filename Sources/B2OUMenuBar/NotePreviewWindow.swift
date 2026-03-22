@@ -101,43 +101,76 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     // MARK: - Font Detection
 
+    /// Classify a font family as monospace by checking its traits.
+    private static func isMonospace(_ family: String) -> Bool {
+        guard let font = NSFont(name: family, size: 13) else { return false }
+        let traits = NSFontManager.shared.traits(of: font)
+        return traits.contains(.fixedPitchFontMask)
+    }
+
+    /// Build a full list of all system-installed font families, grouped into
+    /// Sans-serif / Serif / Monospace sections with a "System" default at the top.
     private static func detectFonts() -> [(label: String, css: String)] {
-        let available = Set(NSFontManager.shared.availableFontFamilies)
+        let fm = NSFontManager.shared
+        let families = fm.availableFontFamilies.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
 
-        let candidates: [(label: String, css: String, check: String?)] = [
-            // Sans-serif
-            ("System",          "-apple-system, BlinkMacSystemFont, sans-serif", nil),
-            ("Helvetica Neue",  "'Helvetica Neue', sans-serif",                  "Helvetica Neue"),
-            ("Avenir",          "'Avenir', sans-serif",                          "Avenir"),
-            ("Avenir Next",     "'Avenir Next', sans-serif",                     "Avenir Next"),
-            ("Futura",          "'Futura', sans-serif",                          "Futura"),
-            ("Gill Sans",       "'Gill Sans', sans-serif",                       "Gill Sans"),
-            ("Optima",          "'Optima', sans-serif",                          "Optima"),
-            // Serif
-            ("Georgia",         "'Georgia', serif",                              "Georgia"),
-            ("Palatino",        "'Palatino', serif",                             "Palatino"),
-            ("Baskerville",     "'Baskerville', serif",                          "Baskerville"),
-            ("Hoefler Text",    "'Hoefler Text', serif",                         "Hoefler Text"),
-            ("Times New Roman", "'Times New Roman', serif",                      "Times New Roman"),
-            ("Cochin",          "'Cochin', serif",                               "Cochin"),
-            ("Charter",         "'Charter', serif",                              "Charter"),
-            ("Iowan Old Style", "'Iowan Old Style', serif",                      "Iowan Old Style"),
-            ("Literata",        "'Literata', serif",                             "Literata"),
-            ("American Typewriter", "'American Typewriter', serif",              "American Typewriter"),
-            // Monospace
-            ("Menlo",           "'Menlo', monospace",                            "Menlo"),
-            ("Monaco",          "'Monaco', monospace",                           "Monaco"),
-            ("SF Mono",         "'SF Mono', 'SFMono-Regular', monospace",        "SF Mono"),
-            ("Courier New",     "'Courier New', monospace",                      "Courier New"),
-            ("Source Code Pro",  "'Source Code Pro', monospace",                  "Source Code Pro"),
-            ("Fira Code",       "'Fira Code', monospace",                        "Fira Code"),
-            ("JetBrains Mono",  "'JetBrains Mono', monospace",                   "JetBrains Mono"),
-            ("IBM Plex Mono",   "'IBM Plex Mono', monospace",                    "IBM Plex Mono"),
-            ("Cascadia Code",   "'Cascadia Code', monospace",                    "Cascadia Code"),
-        ]
+        var sansSerif: [(String, String)] = []
+        var serif: [(String, String)] = []
+        var monospace: [(String, String)] = []
 
-        return candidates.filter { $0.check == nil || available.contains($0.check!) }
-            .map { (label: $0.label, css: $0.css) }
+        for family in families {
+            // Skip hidden / internal font families
+            if family.hasPrefix(".") { continue }
+
+            let cssFamily = "'\(family)'"
+
+            if isMonospace(family) {
+                monospace.append((family, "\(cssFamily), monospace"))
+            } else {
+                // Heuristic: check serif trait on representative font
+                if let font = NSFont(name: family, size: 13) {
+                    let traits = fm.traits(of: font)
+                    if traits.contains(.italicFontMask) == false, family.localizedCaseInsensitiveContains("serif")
+                        || family.localizedCaseInsensitiveContains("Georgia")
+                        || family.localizedCaseInsensitiveContains("Palatino")
+                        || family.localizedCaseInsensitiveContains("Baskerville")
+                        || family.localizedCaseInsensitiveContains("Times")
+                        || family.localizedCaseInsensitiveContains("Cochin")
+                        || family.localizedCaseInsensitiveContains("Garamond") {
+                        // Known serif patterns
+                        serif.append((family, "\(cssFamily), serif"))
+                    } else {
+                        // Default: treat as sans-serif
+                        sansSerif.append((family, "\(cssFamily), sans-serif"))
+                    }
+                } else {
+                    sansSerif.append((family, "\(cssFamily), sans-serif"))
+                }
+            }
+        }
+
+        var result: [(label: String, css: String)] = []
+
+        // Always start with system default
+        result.append((label: "System", css: "-apple-system, BlinkMacSystemFont, sans-serif"))
+
+        // Section headers use an em-dash prefix to visually separate groups
+        if !sansSerif.isEmpty {
+            result.append((label: "\u{2500}\u{2500} Sans-serif \u{2500}\u{2500}", css: ""))
+            result += sansSerif.map { (label: $0.0, css: $0.1) }
+        }
+        if !serif.isEmpty {
+            result.append((label: "\u{2500}\u{2500} Serif \u{2500}\u{2500}", css: ""))
+            result += serif.map { (label: $0.0, css: $0.1) }
+        }
+        if !monospace.isEmpty {
+            result.append((label: "\u{2500}\u{2500} Monospace \u{2500}\u{2500}", css: ""))
+            result += monospace.map { (label: $0.0, css: $0.1) }
+        }
+
+        return result
     }
 
     // MARK: - Sort
@@ -277,14 +310,20 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         var tx: CGFloat = sidebarWidth + 14
 
         // Font popup (no label — popup title is self-explanatory)
-        let fontPopup = NSPopUpButton(frame: NSRect(x: tx, y: 9, width: 140, height: 22), pullsDown: false)
+        let fontPopup = NSPopUpButton(frame: NSRect(x: tx, y: 9, width: 180, height: 22), pullsDown: false)
         fontPopup.controlSize = .small
         fontPopup.font = NSFont.systemFont(ofSize: 11)
-        for opt in fontOptions { fontPopup.addItem(withTitle: opt.label) }
+        for opt in fontOptions {
+            fontPopup.addItem(withTitle: opt.label)
+            // Disable section header items (they have empty css)
+            if opt.css.isEmpty, let item = fontPopup.lastItem {
+                item.isEnabled = false
+            }
+        }
         fontPopup.target = self
         fontPopup.action = #selector(onFontChanged(_:))
         toolbar.addSubview(fontPopup)
-        tx += 146
+        tx += 186
 
         // Size popup
         let sizePopup = NSPopUpButton(frame: NSRect(x: tx, y: 9, width: 52, height: 22), pullsDown: false)
@@ -399,7 +438,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         bottomBar.addSubview(hDiv)
 
         wordCountLabel = NSTextField(labelWithString: "")
-        wordCountLabel?.frame = NSRect(x: 16, y: 10, width: 320, height: 16)
+        wordCountLabel?.frame = NSRect(x: 16, y: 10, width: 420, height: 16)
         wordCountLabel?.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         wordCountLabel?.textColor = .tertiaryLabelColor
         wordCountLabel?.lineBreakMode = .byTruncatingTail
@@ -509,7 +548,7 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         if let mod = note.modified {
             parts.append(cellDateFormatter.string(from: mod))
         }
-        parts.append(formatWordCount(note.wordCount))
+        parts.append(formatCount(note.wordCount, t("preview.words")))
         if !note.tags.isEmpty {
             parts.append(note.tags.prefix(2).joined(separator: ", "))
         }
@@ -541,8 +580,8 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         webView?.loadHTMLString(html, baseURL: note.filePath.deletingLastPathComponent())
         sourceTextView?.string = body
 
-        // Status bar
-        var info = "\(note.wordCount) \(t("preview.words"))"
+        // Status bar — show both word count and character count
+        var info = "\(note.wordCount) \(t("preview.words"))  \u{00b7}  \(note.charCount) \(t("preview.chars"))"
         if let mod = note.modified {
             info += "  \u{00b7}  " + cellDateFormatter.string(from: mod)
         }
@@ -571,7 +610,10 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
     @objc private func onFontChanged(_ sender: NSPopUpButton) {
         let idx = sender.indexOfSelectedItem
         guard idx >= 0, idx < fontOptions.count else { return }
-        fontFamily = fontOptions[idx].css
+        // Ignore section header selections (empty css)
+        let css = fontOptions[idx].css
+        guard !css.isEmpty else { return }
+        fontFamily = css
         refreshPreview()
     }
 
@@ -617,11 +659,11 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
 
     // MARK: - Helpers
 
-    private func formatWordCount(_ n: Int) -> String {
+    private func formatCount(_ n: Int, _ unit: String) -> String {
         if n >= 1000 {
-            return String(format: "%.1fk \(t("preview.words"))", Double(n) / 1000.0)
+            return String(format: "%.1fk %@", Double(n) / 1000.0, unit)
         }
-        return "\(n) \(t("preview.words"))"
+        return "\(n) \(unit)"
     }
 
     // MARK: - Markdown → HTML

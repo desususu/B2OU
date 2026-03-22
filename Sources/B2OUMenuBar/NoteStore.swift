@@ -5,6 +5,7 @@
 // and note preview features.
 
 import Foundation
+import NaturalLanguage
 import B2OUCore
 
 // MARK: - Note Metadata
@@ -148,8 +149,9 @@ class NoteStore {
         }
 
         let body = bodyContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let words = body.isEmpty ? 0 : body.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
-        let chars = body.filter { !$0.isWhitespace && !$0.isNewline }.count
+        let plainText = Self.stripMarkdown(body)
+        let words = plainText.isEmpty ? 0 : Self.countWords(plainText)
+        let chars = plainText.filter { !$0.isWhitespace && !$0.isNewline }.count
         let hasImages = body.contains("![") || body.contains("[image:")
 
         return NoteMetadata(
@@ -157,6 +159,66 @@ class NoteStore {
             tags: tags, wordCount: words, charCount: chars,
             filePath: url, bearId: bearId, hasImages: hasImages
         )
+    }
+
+    /// Strip Markdown syntax so that only prose text remains for counting.
+    private static func stripMarkdown(_ text: String) -> String {
+        var result = text
+
+        // Remove code blocks (``` ... ```)
+        result = result.replacingOccurrences(
+            of: #"```[\s\S]*?```"#, with: "", options: .regularExpression)
+        // Remove inline code
+        result = result.replacingOccurrences(
+            of: #"`[^`]+`"#, with: "", options: .regularExpression)
+        // Remove images: ![alt](url)
+        result = result.replacingOccurrences(
+            of: #"!\[([^\]]*)\]\([^)]+\)"#, with: "$1", options: .regularExpression)
+        // Remove links: [text](url) → keep text
+        result = result.replacingOccurrences(
+            of: #"\[([^\]]+)\]\([^)]+\)"#, with: "$1", options: .regularExpression)
+        // Remove heading markers
+        result = result.replacingOccurrences(
+            of: #"(?m)^#{1,6}\s+"#, with: "", options: .regularExpression)
+        // Remove bold/italic markers
+        result = result.replacingOccurrences(
+            of: #"\*{1,3}(.+?)\*{1,3}"#, with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: #"_{1,3}(.+?)_{1,3}"#, with: "$1", options: .regularExpression)
+        // Remove strikethrough
+        result = result.replacingOccurrences(
+            of: #"~~(.+?)~~"#, with: "$1", options: .regularExpression)
+        // Remove highlight
+        result = result.replacingOccurrences(
+            of: #"==(.+?)=="#, with: "$1", options: .regularExpression)
+        // Remove horizontal rules
+        result = result.replacingOccurrences(
+            of: #"(?m)^[\s]*[-*_]{3,}[\s]*$"#, with: "", options: .regularExpression)
+        // Remove blockquote markers
+        result = result.replacingOccurrences(
+            of: #"(?m)^>\s?"#, with: "", options: .regularExpression)
+        // Remove list markers (-, *, +, 1.)
+        result = result.replacingOccurrences(
+            of: #"(?m)^\s*[-*+]\s+"#, with: "", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: #"(?m)^\s*\d+\.\s+"#, with: "", options: .regularExpression)
+        // Remove bare URLs
+        result = result.replacingOccurrences(
+            of: #"https?://\S+"#, with: "", options: .regularExpression)
+
+        return result
+    }
+
+    /// Count words using NLTokenizer, which correctly segments CJK text.
+    private static func countWords(_ text: String) -> Int {
+        let tokenizer = NLTokenizer(unit: .word)
+        tokenizer.string = text
+        var count = 0
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { _, _ in
+            count += 1
+            return true
+        }
+        return count
     }
 
     private func unquoteYaml(_ s: String) -> String {
