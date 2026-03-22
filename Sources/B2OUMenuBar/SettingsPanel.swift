@@ -72,13 +72,9 @@ private func makeCard(in parent: NSView, x: CGFloat, y: CGFloat, width: CGFloat,
     card.wantsLayer = true
     card.layer?.cornerRadius = cardRadius
     card.layer?.masksToBounds = true
-    if #available(macOS 14.0, *) {
-        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6).cgColor
-    } else {
-        card.layer?.backgroundColor = NSColor(white: 0.95, alpha: 0.6).cgColor
-    }
+    card.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
     card.layer?.borderWidth = 0.5
-    card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.4).cgColor
+    card.layer?.borderColor = NSColor.separatorColor.cgColor
     parent.addSubview(card)
     return card
 }
@@ -233,12 +229,12 @@ class SettingsPanelController: NSObject {
 
     private func buildWindow() {
         let v = values!
-        let style: NSWindow.StyleMask = [.titled, .closable, .fullSizeContentView]
+        let style: NSWindow.StyleMask = [.titled, .closable]
         let rect = NSRect(x: 200, y: 200, width: winWidth, height: winHeight)
 
         window = NSWindow(contentRect: rect, styleMask: style, backing: .buffered, defer: false)
         window?.title = t("settings.title")
-        window?.titlebarAppearsTransparent = true
+        window?.titlebarAppearsTransparent = false
         window?.titleVisibility = .visible
         window?.center()
         window?.isReleasedWhenClosed = false
@@ -246,14 +242,6 @@ class SettingsPanelController: NSObject {
 
         guard let content = window?.contentView else { return }
         content.wantsLayer = true
-
-        // Vibrancy background
-        let vibrancy = NSVisualEffectView(frame: content.bounds)
-        vibrancy.autoresizingMask = [.width, .height]
-        vibrancy.blendingMode = .behindWindow
-        vibrancy.material = .sidebar
-        vibrancy.state = .active
-        content.addSubview(vibrancy)
 
         // Scroll view for content
         let scrollView = NSScrollView(frame: content.bounds)
@@ -267,10 +255,9 @@ class SettingsPanelController: NSObject {
         scrollView.documentView = docView
 
         let w = contentW
-        var cy: CGFloat = pad + 28  // titlebar space
+        var cy: CGFloat = pad
 
         let x0: CGFloat = pad
-        let infoX = x0 + w - infoSize - 4
         let indent: CGFloat = 18
 
         // ── Export Formats Card ──────────────────────────────

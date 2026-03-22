@@ -580,8 +580,8 @@ class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegat
         webView?.loadHTMLString(html, baseURL: note.filePath.deletingLastPathComponent())
         sourceTextView?.string = body
 
-        // Status bar — show both word count and character count
-        var info = "\(note.wordCount) \(t("preview.words"))  \u{00b7}  \(note.charCount) \(t("preview.chars"))"
+        // Status bar
+        var info = "\(note.wordCount) \(t("preview.words"))"
         if let mod = note.modified {
             info += "  \u{00b7}  " + cellDateFormatter.string(from: mod)
         }

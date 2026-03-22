@@ -5,7 +5,6 @@
 // and note preview features.
 
 import Foundation
-import NaturalLanguage
 import B2OUCore
 
 // MARK: - Note Metadata
@@ -149,76 +148,121 @@ class NoteStore {
         }
 
         let body = bodyContent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let plainText = Self.stripMarkdown(body)
-        let words = plainText.isEmpty ? 0 : Self.countWords(plainText)
-        let chars = plainText.filter { !$0.isWhitespace && !$0.isNewline }.count
         let hasImages = body.contains("![") || body.contains("[image:")
+        let count = Self.countText(body)
 
         return NoteMetadata(
             title: title, created: created, modified: modified,
-            tags: tags, wordCount: words, charCount: chars,
+            tags: tags, wordCount: count, charCount: count,
             filePath: url, bearId: bearId, hasImages: hasImages
         )
     }
 
-    /// Strip Markdown syntax so that only prose text remains for counting.
+    /// Strip all Markdown syntax, leaving only prose for counting.
+    /// Links (including display text), images, code, and URLs are removed entirely.
     private static func stripMarkdown(_ text: String) -> String {
-        var result = text
+        var r = text
 
         // Remove code blocks (``` ... ```)
-        result = result.replacingOccurrences(
-            of: #"```[\s\S]*?```"#, with: "", options: .regularExpression)
+        r = r.replacingOccurrences(of: #"```[\s\S]*?```"#, with: " ", options: .regularExpression)
         // Remove inline code
-        result = result.replacingOccurrences(
-            of: #"`[^`]+`"#, with: "", options: .regularExpression)
-        // Remove images: ![alt](url)
-        result = result.replacingOccurrences(
-            of: #"!\[([^\]]*)\]\([^)]+\)"#, with: "$1", options: .regularExpression)
-        // Remove links: [text](url) → keep text
-        result = result.replacingOccurrences(
-            of: #"\[([^\]]+)\]\([^)]+\)"#, with: "$1", options: .regularExpression)
-        // Remove heading markers
-        result = result.replacingOccurrences(
-            of: #"(?m)^#{1,6}\s+"#, with: "", options: .regularExpression)
-        // Remove bold/italic markers
-        result = result.replacingOccurrences(
-            of: #"\*{1,3}(.+?)\*{1,3}"#, with: "$1", options: .regularExpression)
-        result = result.replacingOccurrences(
-            of: #"_{1,3}(.+?)_{1,3}"#, with: "$1", options: .regularExpression)
-        // Remove strikethrough
-        result = result.replacingOccurrences(
-            of: #"~~(.+?)~~"#, with: "$1", options: .regularExpression)
-        // Remove highlight
-        result = result.replacingOccurrences(
-            of: #"==(.+?)=="#, with: "$1", options: .regularExpression)
-        // Remove horizontal rules
-        result = result.replacingOccurrences(
-            of: #"(?m)^[\s]*[-*_]{3,}[\s]*$"#, with: "", options: .regularExpression)
-        // Remove blockquote markers
-        result = result.replacingOccurrences(
-            of: #"(?m)^>\s?"#, with: "", options: .regularExpression)
-        // Remove list markers (-, *, +, 1.)
-        result = result.replacingOccurrences(
-            of: #"(?m)^\s*[-*+]\s+"#, with: "", options: .regularExpression)
-        result = result.replacingOccurrences(
-            of: #"(?m)^\s*\d+\.\s+"#, with: "", options: .regularExpression)
+        r = r.replacingOccurrences(of: #"`[^`]+`"#, with: " ", options: .regularExpression)
+        // Remove images entirely: ![alt](url)
+        r = r.replacingOccurrences(of: #"!\[([^\]]*)\]\([^)]+\)"#, with: " ", options: .regularExpression)
+        // Remove links entirely (including display text): [text](url)
+        r = r.replacingOccurrences(of: #"\[([^\]]*)\]\([^)]+\)"#, with: " ", options: .regularExpression)
+        // Remove reference-style links: [text][ref]
+        r = r.replacingOccurrences(of: #"\[([^\]]*)\]\[[^\]]*\]"#, with: " ", options: .regularExpression)
+        // Remove reference definitions: [ref]: url
+        r = r.replacingOccurrences(of: #"(?m)^\s*\[[^\]]+\]:\s+\S+.*$"#, with: " ", options: .regularExpression)
+        // Remove autolinks: <http://...>
+        r = r.replacingOccurrences(of: #"<https?://[^>]+>"#, with: " ", options: .regularExpression)
         // Remove bare URLs
-        result = result.replacingOccurrences(
-            of: #"https?://\S+"#, with: "", options: .regularExpression)
+        r = r.replacingOccurrences(of: #"https?://\S+"#, with: " ", options: .regularExpression)
+        // Remove heading markers
+        r = r.replacingOccurrences(of: #"(?m)^#{1,6}\s+"#, with: "", options: .regularExpression)
+        // Remove bold/italic markers
+        r = r.replacingOccurrences(of: #"\*{1,3}(.+?)\*{1,3}"#, with: "$1", options: .regularExpression)
+        r = r.replacingOccurrences(of: #"_{1,3}(.+?)_{1,3}"#, with: "$1", options: .regularExpression)
+        // Remove strikethrough
+        r = r.replacingOccurrences(of: #"~~(.+?)~~"#, with: "$1", options: .regularExpression)
+        // Remove highlight
+        r = r.replacingOccurrences(of: #"==(.+?)=="#, with: "$1", options: .regularExpression)
+        // Remove horizontal rules
+        r = r.replacingOccurrences(of: #"(?m)^[\s]*[-*_]{3,}[\s]*$"#, with: " ", options: .regularExpression)
+        // Remove blockquote markers
+        r = r.replacingOccurrences(of: #"(?m)^>\s?"#, with: "", options: .regularExpression)
+        // Remove list markers (-, *, +, 1.)
+        r = r.replacingOccurrences(of: #"(?m)^\s*[-*+]\s+"#, with: "", options: .regularExpression)
+        r = r.replacingOccurrences(of: #"(?m)^\s*\d+\.\s+"#, with: "", options: .regularExpression)
+        // Remove HTML tags
+        r = r.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
 
-        return result
+        return r
     }
 
-    /// Count words using NLTokenizer, which correctly segments CJK text.
-    private static func countWords(_ text: String) -> Int {
-        let tokenizer = NLTokenizer(unit: .word)
-        tokenizer.string = text
+    /// Count text using the standard Chinese metric (字数):
+    /// each CJK character = 1, each English/Latin word = 1,
+    /// punctuation and whitespace excluded.
+    private static func countText(_ text: String) -> Int {
+        let clean = stripMarkdown(text)
         var count = 0
-        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { _, _ in
-            count += 1
-            return true
+        var inLatinWord = false
+
+        for scalar in clean.unicodeScalars {
+            if Self.isCJK(scalar) {
+                // Each CJK character counts as 1
+                if inLatinWord { count += 1; inLatinWord = false }
+                count += 1
+            } else if Self.isLatinLetter(scalar) || scalar == "-" || scalar == "'" {
+                // Latin letters, hyphens in compound words, apostrophes
+                if !inLatinWord { inLatinWord = true }
+            } else if scalar.properties.isAlphabetic && !Self.isPunctuation(scalar) {
+                // Other alphabetic scripts (Cyrillic, etc.) — treat like Latin
+                if !inLatinWord { inLatinWord = true }
+            } else {
+                // Whitespace, punctuation, numbers, symbols — word boundary
+                if inLatinWord { count += 1; inLatinWord = false }
+                // Standalone digits don't count
+            }
         }
+        if inLatinWord { count += 1 }
         return count
+    }
+
+    private static func isCJK(_ s: Unicode.Scalar) -> Bool {
+        let v = s.value
+        // CJK Unified Ideographs, Extension A/B, Compatibility, Rare
+        return (0x4E00...0x9FFF).contains(v)
+            || (0x3400...0x4DBF).contains(v)
+            || (0x20000...0x2A6DF).contains(v)
+            || (0xF900...0xFAFF).contains(v)
+            || (0x2F800...0x2FA1F).contains(v)
+            // Hiragana, Katakana
+            || (0x3040...0x309F).contains(v)
+            || (0x30A0...0x30FF).contains(v)
+            // Hangul Syllables
+            || (0xAC00...0xD7AF).contains(v)
+    }
+
+    private static func isLatinLetter(_ s: Unicode.Scalar) -> Bool {
+        let v = s.value
+        return (0x41...0x5A).contains(v)   // A-Z
+            || (0x61...0x7A).contains(v)   // a-z
+            || (0xC0...0x24F).contains(v)  // Latin Extended (accented)
+    }
+
+    private static func isPunctuation(_ s: Unicode.Scalar) -> Bool {
+        // Chinese punctuation, general punctuation, ASCII punctuation
+        let v = s.value
+        return (0x3000...0x303F).contains(v)       // CJK Symbols and Punctuation
+            || (0xFF01...0xFF0F).contains(v)       // Fullwidth punctuation
+            || (0xFF1A...0xFF20).contains(v)
+            || (0xFF3B...0xFF40).contains(v)
+            || (0xFF5B...0xFF65).contains(v)
+            || (0xFE30...0xFE4F).contains(v)       // CJK Compatibility Forms
+            || (0x2000...0x206F).contains(v)       // General Punctuation
+            || CharacterSet.punctuationCharacters.contains(s)
     }
 
     private func unquoteYaml(_ s: String) -> String {
