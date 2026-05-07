@@ -1,10 +1,4 @@
 .DS_Store
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-build/
+.build/
 dist/
-*.egg-info/
-*.egg
 .env

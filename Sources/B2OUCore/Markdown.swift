@@ -49,11 +49,23 @@ extension NSRegularExpression {
 // MARK: - Title Sanitization
 
 public func cleanTitle(_ title: String) -> String {
-    var result = String(title.prefix(225)).trimmingCharacters(in: .whitespaces)
+    var result = String(title.prefix(225)).trimmingCharacters(in: .whitespacesAndNewlines)
     if result.isEmpty { result = "Untitled" }
     result = reCleanTitle.replaceAll(in: result, with: "-")
     result = reTrailingDash.replaceAll(in: result, with: "")
-    result = result.trimmingCharacters(in: .whitespaces)
+    result = result.trimmingCharacters(in: .whitespacesAndNewlines)
+    result = result.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    result = reTrailingDash.replaceAll(in: result, with: "")
+    result = result.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    let reserved = Set([
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ])
+    if reserved.contains(result.uppercased()) {
+        result += "-note"
+    }
 
     // Ensure UTF-8 byte length fits in 240 bytes
     let maxBytes = 240
@@ -64,6 +76,7 @@ public func cleanTitle(_ title: String) -> String {
             ?? String(decoding: truncated, as: UTF8.self)
         result = result.trimmingCharacters(in: .whitespaces)
     }
+    if result.isEmpty { result = "Untitled" }
     return result
 }
 
@@ -83,7 +96,22 @@ public func normaliseBearMarkdown(_ text: String) -> String {
 // MARK: - Tag Handling
 
 public func hideTags(_ text: String) -> String {
-    reHideTags.replaceAll(in: text, with: "$1")
+    let hadTrailingNewline = text.last?.isNewline == true
+    let lines = text.components(separatedBy: .newlines).filter { line in
+        !isBearTagLine(line)
+    }
+    var result = lines.joined(separator: "\n")
+    if hadTrailingNewline && !result.hasSuffix("\n") {
+        result += "\n"
+    }
+    return result
+}
+
+private func isBearTagLine(_ line: String) -> Bool {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix("#") else { return false }
+    guard let next = trimmed.dropFirst().first else { return false }
+    return !next.isWhitespace && next != "#"
 }
 
 public func extractTags(_ text: String) -> [String] {
@@ -164,8 +192,67 @@ public func subPathFromTag(
         if excludeTags.contains(where: { tag.lowercased().hasPrefix($0.lowercased()) }) {
             return []
         }
-        var sub = tag.hasPrefix(".") ? ("_" + tag.dropFirst()) : tag
+        let wasHidden = tag.hasPrefix(".") && !tag.hasPrefix("..") && !tag.hasPrefix("./")
+        var sub = wasHidden ? String(tag.dropFirst()) : tag
         sub = sanitizeDirName(sub)
+        if wasHidden && !sub.isEmpty {
+            sub = "_" + sub
+        }
+        if sub.isEmpty { continue }
+        let tagPath = (basePath as NSString).appendingPathComponent(sub)
+        try? fm.createDirectory(atPath: tagPath, withIntermediateDirectories: true)
+        paths.append((tagPath as NSString).appendingPathComponent(filename))
+    }
+    return paths
+}
+
+public func subPathFromTags(
+    basePath: String,
+    filename: String,
+    tags allTags: [String],
+    makeTagFolders: Bool,
+    multiTagFolders: Bool,
+    onlyExportTags: [String],
+    excludeTags: [String]
+) -> [String] {
+    let fm = FileManager.default
+    let normalizedTags = allTags.map(normalizeBearTag).filter { !$0.isEmpty }
+
+    if !makeTagFolders {
+        if !excludeTags.isEmpty {
+            let isExcluded = normalizedTags.contains { nt in
+                excludeTags.contains { et in
+                    nt.lowercased().hasPrefix(et.lowercased())
+                }
+            }
+            if isExcluded { return [] }
+        }
+        return [(basePath as NSString).appendingPathComponent(filename)]
+    }
+
+    let tags = multiTagFolders ? normalizedTags : Array(normalizedTags.prefix(1))
+    if tags.isEmpty {
+        return [(basePath as NSString).appendingPathComponent(filename)]
+    }
+
+    var paths = [(basePath as NSString).appendingPathComponent(filename)]
+    for tag in tags {
+        if tag == "/" { continue }
+        if !onlyExportTags.isEmpty {
+            let match = onlyExportTags.contains { et in
+                tag.lowercased().hasPrefix(et.lowercased())
+            }
+            if !match { continue }
+        }
+        if excludeTags.contains(where: { tag.lowercased().hasPrefix($0.lowercased()) }) {
+            return []
+        }
+        let wasHidden = tag.hasPrefix(".") && !tag.hasPrefix("..") && !tag.hasPrefix("./")
+        var sub = wasHidden ? String(tag.dropFirst()) : tag
+        sub = sanitizeDirName(sub)
+        if wasHidden && !sub.isEmpty {
+            sub = "_" + sub
+        }
         if sub.isEmpty { continue }
         let tagPath = (basePath as NSString).appendingPathComponent(sub)
         try? fm.createDirectory(atPath: tagPath, withIntermediateDirectories: true)
@@ -177,10 +264,10 @@ public func subPathFromTag(
 private func sanitizeDirName(_ name: String) -> String {
     var result = reInvalidDirChars.replaceAll(in: name, with: "_")
     result = reMultipleUnderscores.replaceAll(in: result, with: "_")
-    result = result.trimmingCharacters(in: .whitespaces)
+    result = result.trimmingCharacters(in: .whitespacesAndNewlines)
     result = result.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
     // Prevent path traversal: strip ".." components
-    let components = result.components(separatedBy: "/").filter { $0 != ".." && $0 != "." }
+    let components = result.components(separatedBy: "/").filter { !$0.isEmpty && $0 != ".." && $0 != "." }
     result = components.joined(separator: "/")
     return result
 }

@@ -18,6 +18,8 @@ public let defaultBearFilePath = home
     .appendingPathComponent("Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear")
     .appendingPathComponent("Application Data/Local Files/Note Files")
 
+public let defaultBearCLIPath = URL(fileURLWithPath: "/Applications/Bear.app/Contents/MacOS/bearcli")
+
 // MARK: - ExportConfig
 
 public struct ExportConfig: Sendable {
@@ -29,7 +31,11 @@ public struct ExportConfig: Sendable {
     public var bearDB: URL
     public var bearImagePath: URL
     public var bearFilePath: URL
+    public var bearCLIPath: URL
     public var assetsPath: URL?
+
+    // Bear read source: "auto", "bearcli", or "sqlite"
+    public var bearSource: String
 
     // Export format: "md", "tb", "both"
     public var exportFormat: String
@@ -43,6 +49,9 @@ public struct ExportConfig: Sendable {
 
     // Metadata
     public var yamlFrontMatter: Bool
+
+    // Optional manual scope. Empty means export every note matched by the profile.
+    public var onlyNoteUUIDs: Set<String>
 
     // Filename strategy: "title", "slug", "date-title", "id"
     public var naming: String
@@ -61,6 +70,8 @@ public struct ExportConfig: Sendable {
         bearDB: URL = defaultBearDB,
         bearImagePath: URL = defaultBearImagePath,
         bearFilePath: URL = defaultBearFilePath,
+        bearCLIPath: URL = defaultBearCLIPath,
+        bearSource: String = "auto",
         assetsPath: URL? = nil,
         exportFormat: String = "md",
         makeTagFolders: Bool = false,
@@ -69,6 +80,7 @@ public struct ExportConfig: Sendable {
         onlyExportTags: [String] = [],
         excludeTags: [String] = [],
         yamlFrontMatter: Bool = false,
+        onlyNoteUUIDs: Set<String> = [],
         naming: String = "title",
         onDelete: String = "trash",
         backupInterval: Int = 0,
@@ -80,6 +92,8 @@ public struct ExportConfig: Sendable {
         self.bearDB = bearDB
         self.bearImagePath = bearImagePath
         self.bearFilePath = bearFilePath
+        self.bearCLIPath = bearCLIPath
+        self.bearSource = bearSource
         self.assetsPath = assetsPath ?? exportPath.appendingPathComponent("BearImages")
         self.exportFormat = exportFormat
         self.makeTagFolders = makeTagFolders
@@ -88,6 +102,7 @@ public struct ExportConfig: Sendable {
         self.onlyExportTags = onlyExportTags
         self.excludeTags = excludeTags
         self.yamlFrontMatter = yamlFrontMatter
+        self.onlyNoteUUIDs = onlyNoteUUIDs
         self.naming = naming
         self.onDelete = onDelete
         self.backupInterval = backupInterval
@@ -140,7 +155,10 @@ public enum B2OUError: Error, LocalizedError {
     case missingOutputPath(String)
     case tomlNotAvailable
     case databaseOpenFailed(String)
+    case bearCLIUnavailable(String)
+    case bearCLICommandFailed(String)
     case exportLocked(URL)
+    case dirtyExportFiles([URL])
 
     public var errorDescription: String? {
         switch self {
@@ -156,8 +174,19 @@ public enum B2OUError: Error, LocalizedError {
             return "Could not parse TOML configuration."
         case .databaseOpenFailed(let reason):
             return "Could not open Bear database: \(reason)"
+        case .bearCLIUnavailable(let path):
+            return "Bear CLI is not available at \(path)"
+        case .bearCLICommandFailed(let reason):
+            return "Bear CLI command failed: \(reason)"
         case .exportLocked(let path):
             return "Another b2ou instance is already exporting to \(path.path)."
+        case .dirtyExportFiles(let paths):
+            let preview = paths
+                .prefix(5)
+                .map(\.path)
+                .joined(separator: "\n")
+            let suffix = paths.count > 5 ? "\n..." : ""
+            return "Export stopped because some managed files were changed outside B2OU:\n\(preview)\(suffix)"
         }
     }
 }

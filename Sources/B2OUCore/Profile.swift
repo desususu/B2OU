@@ -43,7 +43,7 @@ private struct SimpleTOML {
         var currentPath: [String] = []
 
         for line in content.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = stripInlineComment(line).trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
 
             // Table header: [profile.default]
@@ -72,23 +72,21 @@ private struct SimpleTOML {
 
         // String: "..."
         if raw.hasPrefix("\"") && raw.hasSuffix("\"") && raw.count >= 2 {
-            var s = String(raw.dropFirst().dropLast())
-            s = s.replacingOccurrences(of: "\\\\", with: "\u{0000}")
-            s = s.replacingOccurrences(of: "\\\"", with: "\"")
-            s = s.replacingOccurrences(of: "\\n", with: "\n")
-            s = s.replacingOccurrences(of: "\u{0000}", with: "\\")
-            return s
+            return unescapeDoubleQuoted(String(raw.dropFirst().dropLast()))
+        }
+
+        // Literal string: '...'
+        if raw.hasPrefix("'") && raw.hasSuffix("'") && raw.count >= 2 {
+            return String(raw.dropFirst().dropLast())
         }
 
         // Array: ["a", "b"]
         if raw.hasPrefix("[") && raw.hasSuffix("]") {
             let inner = String(raw.dropFirst().dropLast())
-            return inner.components(separatedBy: ",").compactMap { item -> String? in
-                let trimmed = item.trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("\"") && trimmed.hasSuffix("\"") && trimmed.count >= 2 {
-                    return String(trimmed.dropFirst().dropLast())
-                }
-                return trimmed.isEmpty ? nil : trimmed
+            return splitArrayItems(inner).compactMap { item -> String? in
+                let trimmed = item.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return parseValue(trimmed) as? String
             }
         }
 
@@ -96,6 +94,80 @@ private struct SimpleTOML {
         if let d = Double(raw) { return d }
 
         return raw
+    }
+
+    private static func stripInlineComment(_ line: String) -> String {
+        var result = ""
+        var quote: Character?
+        var escaped = false
+
+        for ch in line {
+            if let currentQuote = quote {
+                result.append(ch)
+                if escaped {
+                    escaped = false
+                } else if ch == "\\" && currentQuote == "\"" {
+                    escaped = true
+                } else if ch == currentQuote {
+                    quote = nil
+                }
+                continue
+            }
+
+            if ch == "\"" || ch == "'" {
+                quote = ch
+                result.append(ch)
+            } else if ch == "#" {
+                break
+            } else {
+                result.append(ch)
+            }
+        }
+
+        return result
+    }
+
+    private static func unescapeDoubleQuoted(_ value: String) -> String {
+        var s = value
+        s = s.replacingOccurrences(of: "\\\\", with: "\u{0000}")
+        s = s.replacingOccurrences(of: "\\\"", with: "\"")
+        s = s.replacingOccurrences(of: "\\n", with: "\n")
+        s = s.replacingOccurrences(of: "\\t", with: "\t")
+        s = s.replacingOccurrences(of: "\u{0000}", with: "\\")
+        return s
+    }
+
+    private static func splitArrayItems(_ inner: String) -> [String] {
+        var items: [String] = []
+        var current = ""
+        var quote: Character?
+        var escaped = false
+
+        for ch in inner {
+            if let currentQuote = quote {
+                current.append(ch)
+                if escaped {
+                    escaped = false
+                } else if ch == "\\" && currentQuote == "\"" {
+                    escaped = true
+                } else if ch == currentQuote {
+                    quote = nil
+                }
+                continue
+            }
+
+            if ch == "\"" || ch == "'" {
+                quote = ch
+                current.append(ch)
+            } else if ch == "," {
+                items.append(current)
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        items.append(current)
+        return items
     }
 
     private static func setNestedValue(_ dict: inout [String: Any], path: [String], value: Any) {
@@ -133,10 +205,14 @@ private func parseProfile(name: String, data: [String: Any]) throws -> ExportCon
     var backupMaxKeep = 24
     if let v = data["backup-max-keep"] as? Double { backupMaxKeep = Int(v) }
     else if let v = data["backup-max-keep"] as? Int64 { backupMaxKeep = Int(v) }
+    let bearCLIPath = (data["bearcli-path"] as? String)
+        .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) } ?? defaultBearCLIPath
 
     return ExportConfig(
         exportPath: URL(fileURLWithPath: (out as NSString).expandingTildeInPath),
         exportPathTB: outTB.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) },
+        bearCLIPath: bearCLIPath,
+        bearSource: (data["source"] as? String) ?? "auto",
         exportFormat: fmt,
         makeTagFolders: (data["tag-folders"] as? Bool) ?? false,
         multiTagFolders: (data["multi-tag-folders"] as? Bool) ?? true,

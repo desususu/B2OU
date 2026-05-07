@@ -1,948 +1,643 @@
-// NotePreviewWindow.swift — Note browser with Markdown preview, typography controls,
-// day/night mode, split-screen source view, and sort options.
-//
-// Apple-design-inspired: vibrancy sidebar, unified toolbar, full-size content view
-// with titlebar blending, refined typography, and polished layout.
+// NotePreviewWindow.swift - SwiftUI note browser and Markdown preview.
 
 import Cocoa
+import SwiftUI
 import WebKit
+import B2OUAppSupport
 import B2OUCore
+import Down
 
-// MARK: - Layout Constants
-
-private let previewWidth:  CGFloat = 1100
-private let previewHeight: CGFloat = 720
-private let sidebarWidth:  CGFloat = 260
-private let toolbarH:      CGFloat = 40
-private let bottomBarH:    CGFloat = 36
-
-// MARK: - Sort Mode
-
-private enum SortMode: Int {
+private enum SortMode: Int, CaseIterable {
     case title = 0
     case dateModified = 1
     case dateCreated = 2
     case wordCount = 3
+
+    var title: String {
+        switch self {
+        case .title: return t("preview.sort_title")
+        case .dateModified: return t("preview.sort_modified")
+        case .dateCreated: return t("preview.sort_created")
+        case .wordCount: return t("preview.sort_words")
+        }
+    }
 }
 
-// MARK: - View Mode
-
-private enum ViewMode: Int {
+private enum ViewMode: Int, CaseIterable {
     case preview = 0
     case source = 1
     case split = 2
+
+    var title: String {
+        switch self {
+        case .preview: return t("preview.mode_preview")
+        case .source: return t("preview.mode_source")
+        case .split: return t("preview.mode_split")
+        }
+    }
 }
 
-// MARK: - Preview Controller
+enum NoteBrowserFilter: Int, CaseIterable {
+    case all = 0
+    case withImages = 1
+    case untagged = 2
+    case missingImages = 3
+    case duplicateTitles = 4
+    case missingBearId = 5
 
-class NotePreviewController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    func localizedTitle() -> String {
+        switch self {
+        case .all: return t("preview.filter_all")
+        case .withImages: return t("preview.filter_images")
+        case .untagged: return t("preview.filter_untagged")
+        case .missingImages: return t("preview.filter_missing_images")
+        case .duplicateTitles: return t("preview.filter_duplicate_titles")
+        case .missingBearId: return t("preview.filter_missing_bear")
+        }
+    }
+}
+
+private final class NotePreviewController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
-    private var store: NoteStore?
-    private var filteredNotes: [NoteMetadata] = []
-    private var selectedNote: NoteMetadata?
+    private var hostingController: NSHostingController<NotePreviewRootView>?
+    private var languageObserver: NSObjectProtocol?
 
-    private var tableView: NSTableView?
-    private var webView: WKWebView?
-    private var searchField: NSSearchField?
-    private var wordCountLabel: NSTextField?
-    private var openBearBtn: NSButton?
-    private var sortPopup: NSPopUpButton?
-
-    // Split-screen
-    private var contentContainer: NSView?
-    private var sourceScrollView: NSScrollView?
-    private var sourceTextView: NSTextView?
-    private var splitDivider: NSView?
-    private var viewMode: ViewMode = .preview
-
-    // Typography state
-    private var fontFamily = "-apple-system, BlinkMacSystemFont, sans-serif"
-    private var fontSize: CGFloat = 15
-    private var lineSpacing: CGFloat = 1.6
-    private var isDarkMode = false
-
-    // Dynamically populated from system
-    private var fontOptions: [(label: String, css: String)] = []
-    private let sizeOptions: [CGFloat] = [12, 13, 14, 15, 16, 18, 20, 24]
-    private let spacingOptions: [CGFloat] = [1.0, 1.2, 1.4, 1.5, 1.6, 1.8, 2.0]
-
-    private var sortMode: SortMode = .dateModified
-
-    // Date formatter for sidebar cells
-    private let cellDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .none
-        return f
-    }()
-
-    func show(store: NoteStore) {
-        self.store = store
-        applySort()
-
-        if let window, window.isVisible {
-            tableView?.reloadData()
+    func show(store: NoteStore, selecting note: NoteMetadata?, filter: NoteBrowserFilter) {
+        let root = NotePreviewRootView(store: store, initialSelection: note, initialFilter: filter)
+        if let window, let hostingController {
+            hostingController.rootView = root
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate(ignoringOtherApps: false)
             return
         }
 
-        fontOptions = Self.detectFonts()
-        buildWindow()
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        let window = NSWindow(
+            contentRect: NSRect(x: 170, y: 150, width: 1120, height: 760),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = t("preview.title")
+        window.minSize = NSSize(width: 880, height: 560)
+        window.titlebarAppearsTransparent = true
+        window.delegate = self
+
+        let hostingController = NSHostingController(rootView: root)
+        window.contentViewController = hostingController
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: false)
+
+        self.window = window
+        self.hostingController = hostingController
+        if languageObserver == nil {
+            languageObserver = makeB2OULanguageObserver { [weak self] in
+                self?.window?.title = t("preview.title")
+            }
+        }
     }
 
-    func close() {
-        NotificationCenter.default.removeObserver(self)
-        if let tmp = tempHTMLFile { try? FileManager.default.removeItem(at: tmp) }
-        window?.close()
+    func windowWillClose(_ notification: Notification) {
+        removeB2OULanguageObserver(&languageObserver)
         window = nil
+        hostingController = nil
+    }
+}
+
+private struct NotePreviewRootView: View {
+    @ObservedObject var store: NoteStore
+    let initialSelection: NoteMetadata?
+    let initialFilter: NoteBrowserFilter
+
+    @State private var searchText = ""
+    @State private var filter: NoteBrowserFilter
+    @State private var sortMode: SortMode = .dateModified
+    @State private var viewMode: ViewMode = .preview
+    @State private var fontSize = 16.0
+    @State private var lineSpacing = 1.55
+    @State private var darkPreview = false
+    @State private var selectedPath: URL?
+
+    init(store: NoteStore, initialSelection: NoteMetadata?, initialFilter: NoteBrowserFilter) {
+        self.store = store
+        self.initialSelection = initialSelection
+        self.initialFilter = initialFilter
+        _filter = State(initialValue: initialFilter)
+        _selectedPath = State(initialValue: initialSelection?.filePath)
     }
 
-    // MARK: - Font Detection
-
-    /// Classify a font family as monospace by checking its traits.
-    private static func isMonospace(_ family: String) -> Bool {
-        guard let font = NSFont(name: family, size: 13) else { return false }
-        let traits = NSFontManager.shared.traits(of: font)
-        return traits.contains(.fixedPitchFontMask)
+    private var notes: [NoteMetadata] { store.notes }
+    private var duplicateTitleKeys: Set<String> {
+        var counts: [String: Int] = [:]
+        for note in notes {
+            let key = note.normalizedTitleKey
+            if !key.isEmpty { counts[key, default: 0] += 1 }
+        }
+        return Set(counts.compactMap { $0.value > 1 ? $0.key : nil })
     }
-
-    /// Build a full list of all system-installed font families, grouped into
-    /// Sans-serif / Serif / Monospace sections with a "System" default at the top.
-    private static func detectFonts() -> [(label: String, css: String)] {
-        let fm = NSFontManager.shared
-        let families = fm.availableFontFamilies.sorted {
-            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-        }
-
-        var sansSerif: [(String, String)] = []
-        var serif: [(String, String)] = []
-        var monospace: [(String, String)] = []
-
-        for family in families {
-            // Skip hidden / internal font families
-            if family.hasPrefix(".") { continue }
-
-            let cssFamily = "'\(family)'"
-
-            if isMonospace(family) {
-                monospace.append((family, "\(cssFamily), monospace"))
-            } else {
-                // Heuristic: check serif trait on representative font
-                if let font = NSFont(name: family, size: 13) {
-                    let traits = fm.traits(of: font)
-                    if traits.contains(.italicFontMask) == false, family.localizedCaseInsensitiveContains("serif")
-                        || family.localizedCaseInsensitiveContains("Georgia")
-                        || family.localizedCaseInsensitiveContains("Palatino")
-                        || family.localizedCaseInsensitiveContains("Baskerville")
-                        || family.localizedCaseInsensitiveContains("Times")
-                        || family.localizedCaseInsensitiveContains("Cochin")
-                        || family.localizedCaseInsensitiveContains("Garamond") {
-                        // Known serif patterns
-                        serif.append((family, "\(cssFamily), serif"))
-                    } else {
-                        // Default: treat as sans-serif
-                        sansSerif.append((family, "\(cssFamily), sans-serif"))
-                    }
-                } else {
-                    sansSerif.append((family, "\(cssFamily), sans-serif"))
-                }
-            }
-        }
-
-        var result: [(label: String, css: String)] = []
-
-        // Always start with system default
-        result.append((label: "System", css: "-apple-system, BlinkMacSystemFont, sans-serif"))
-
-        // Section headers use an em-dash prefix to visually separate groups
-        if !sansSerif.isEmpty {
-            result.append((label: "\u{2500}\u{2500} Sans-serif \u{2500}\u{2500}", css: ""))
-            result += sansSerif.map { (label: $0.0, css: $0.1) }
-        }
-        if !serif.isEmpty {
-            result.append((label: "\u{2500}\u{2500} Serif \u{2500}\u{2500}", css: ""))
-            result += serif.map { (label: $0.0, css: $0.1) }
-        }
-        if !monospace.isEmpty {
-            result.append((label: "\u{2500}\u{2500} Monospace \u{2500}\u{2500}", css: ""))
-            result += monospace.map { (label: $0.0, css: $0.1) }
-        }
-
-        return result
+    private var queryTokens: [String] {
+        searchText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
     }
-
-    // MARK: - Sort
-
-    private func applySort() {
-        guard let store else { return }
-        let query = searchField?.stringValue.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
-        var notes = store.notes
-
-        if !query.isEmpty {
-            notes = notes.filter { note in
-                note.title.lowercased().contains(query)
-                    || note.tags.contains { $0.lowercased().contains(query) }
-            }
+    private var availableFilters: [NoteBrowserFilter] {
+        let hasMissingSourceLinks = notesContainMissingSourceLinks(notes)
+        return NoteBrowserFilter.allCases.filter { hasMissingSourceLinks || $0 != .missingBearId }
+    }
+    private var filteredNotes: [NoteMetadata] {
+        let duplicateKeys = duplicateTitleKeys
+        var result = notes.filter { matchesFilter($0, duplicateKeys: duplicateKeys) }
+        if !queryTokens.isEmpty {
+            result = result.filter { matchesSearch($0, tokens: queryTokens) }
         }
-
         switch sortMode {
         case .title:
-            notes.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            result.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         case .dateModified:
-            notes.sort { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
+            result.sort { ($0.modified ?? .distantPast) > ($1.modified ?? .distantPast) }
         case .dateCreated:
-            notes.sort { ($0.created ?? .distantPast) > ($1.created ?? .distantPast) }
+            result.sort { ($0.created ?? .distantPast) > ($1.created ?? .distantPast) }
         case .wordCount:
-            notes.sort { $0.wordCount > $1.wordCount }
+            result.sort { $0.wordCount > $1.wordCount }
         }
-
-        filteredNotes = notes
+        return result
+    }
+    private var selectedNote: NoteMetadata? {
+        guard let selectedPath else { return filteredNotes.first }
+        return filteredNotes.first { $0.filePath == selectedPath } ?? filteredNotes.first
     }
 
-    // MARK: - Build Window
-
-    private func buildWindow() {
-        let style: NSWindow.StyleMask = [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView]
-        let rect = NSRect(x: 0, y: 0, width: previewWidth, height: previewHeight)
-        window = NSWindow(contentRect: rect, styleMask: style, backing: .buffered, defer: false)
-        window?.title = t("preview.title")
-        window?.titlebarAppearsTransparent = true
-        window?.titleVisibility = .visible
-        window?.center()
-        window?.isReleasedWhenClosed = false
-        window?.minSize = NSSize(width: 740, height: 460)
-        window?.backgroundColor = .windowBackgroundColor
-
-        guard let content = window?.contentView else { return }
-        content.wantsLayer = true
-
-        let ch = content.frame.height
-        let cw = content.frame.width
-
-        // ── Sidebar with Vibrancy ───────────────────────────────
-
-        let sideY: CGFloat = bottomBarH
-        let sideH = ch - toolbarH - bottomBarH
-
-        let sidebarEffect = NSVisualEffectView(frame: NSRect(x: 0, y: sideY, width: sidebarWidth, height: sideH))
-        sidebarEffect.autoresizingMask = [.height]
-        sidebarEffect.blendingMode = .behindWindow
-        sidebarEffect.material = .sidebar
-        sidebarEffect.state = .active
-        content.addSubview(sidebarEffect)
-
-        // Sort popup
-        var sy = sideH - 34
-        sortPopup = NSPopUpButton(frame: NSRect(x: 12, y: sy, width: sidebarWidth - 24, height: 24), pullsDown: false)
-        sortPopup?.controlSize = .small
-        sortPopup?.font = NSFont.systemFont(ofSize: 11)
-        sortPopup?.addItems(withTitles: [
-            t("preview.sort_title"),
-            t("preview.sort_modified"),
-            t("preview.sort_created"),
-            t("preview.sort_words"),
-        ])
-        sortPopup?.selectItem(at: sortMode.rawValue)
-        sortPopup?.target = self
-        sortPopup?.action = #selector(onSortChanged(_:))
-        sortPopup?.autoresizingMask = [.minYMargin, .width]
-        sidebarEffect.addSubview(sortPopup!)
-
-        // Search field
-        sy -= 30
-        searchField = NSSearchField(frame: NSRect(x: 12, y: sy, width: sidebarWidth - 24, height: 26))
-        searchField?.controlSize = .small
-        searchField?.font = NSFont.systemFont(ofSize: 12)
-        searchField?.placeholderString = t("preview.search")
-        searchField?.target = self
-        searchField?.action = #selector(onSearch(_:))
-        searchField?.autoresizingMask = [.minYMargin, .width]
-        sidebarEffect.addSubview(searchField!)
-
-        // Table view in scroll view
-        let tableScrollH = sy - 6
-        let tableScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: sidebarWidth, height: tableScrollH))
-        tableScroll.autoresizingMask = [.height, .width]
-        tableScroll.hasVerticalScroller = true
-        tableScroll.drawsBackground = false
-        tableScroll.scrollerStyle = .overlay
-
-        tableView = NSTableView()
-        tableView?.headerView = nil
-        tableView?.rowHeight = 48
-        tableView?.intercellSpacing = NSSize(width: 0, height: 0)
-        tableView?.selectionHighlightStyle = .regular
-        tableView?.backgroundColor = .clear
-        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("title"))
-        col.width = sidebarWidth - 4
-        tableView?.addTableColumn(col)
-        tableView?.dataSource = self
-        tableView?.delegate = self
-        tableScroll.documentView = tableView
-
-        sidebarEffect.addSubview(tableScroll)
-
-        // Vertical divider
-        let divider = NSView(frame: NSRect(x: sidebarWidth, y: sideY, width: 1, height: sideH))
-        divider.wantsLayer = true
-        divider.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        divider.autoresizingMask = [.height]
-        content.addSubview(divider)
-
-        // ── Toolbar ─────────────────────────────────────────────
-
-        let toolbar = NSVisualEffectView(frame: NSRect(x: 0, y: ch - toolbarH, width: cw, height: toolbarH))
-        toolbar.autoresizingMask = [.width, .minYMargin]
-        toolbar.blendingMode = .behindWindow
-        toolbar.material = .titlebar
-        toolbar.state = .active
-        content.addSubview(toolbar)
-
-        // Horizontal divider under toolbar
-        let toolDiv = NSView(frame: NSRect(x: 0, y: 0, width: cw, height: 1))
-        toolDiv.wantsLayer = true
-        toolDiv.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        toolDiv.autoresizingMask = [.width]
-        toolbar.addSubview(toolDiv)
-
-        var tx: CGFloat = sidebarWidth + 14
-
-        // Font popup (no label — popup title is self-explanatory)
-        let fontPopup = NSPopUpButton(frame: NSRect(x: tx, y: 9, width: 180, height: 22), pullsDown: false)
-        fontPopup.controlSize = .small
-        fontPopup.font = NSFont.systemFont(ofSize: 11)
-        for opt in fontOptions {
-            fontPopup.addItem(withTitle: opt.label)
-            // Disable section header items (they have empty css)
-            if opt.css.isEmpty, let item = fontPopup.lastItem {
-                item.isEnabled = false
+    var body: some View {
+        NavigationSplitView {
+            VStack(spacing: 0) {
+                browserControls
+                List(filteredNotes, id: \.filePath, selection: $selectedPath) { note in
+                    NotePreviewRow(note: note, queryTokens: queryTokens)
+                        .tag(note.filePath)
+                }
+                .listStyle(.sidebar)
+                resultFooter
+            }
+            .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 440)
+        } detail: {
+            if let selectedNote {
+                NoteDetailView(
+                    note: selectedNote,
+                    queryTokens: queryTokens,
+                    viewMode: $viewMode,
+                    fontSize: $fontSize,
+                    lineSpacing: $lineSpacing,
+                    darkPreview: $darkPreview
+                )
+            } else {
+                EmptyNoteSelectionView()
             }
         }
-        fontPopup.target = self
-        fontPopup.action = #selector(onFontChanged(_:))
-        toolbar.addSubview(fontPopup)
-        tx += 186
+        .toolbar {
+            ToolbarItemGroup {
+                Picker(t("preview.view"), selection: $viewMode) {
+                    ForEach(ViewMode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 240)
 
-        // Size popup
-        let sizePopup = NSPopUpButton(frame: NSRect(x: tx, y: 9, width: 52, height: 22), pullsDown: false)
-        sizePopup.controlSize = .small
-        sizePopup.font = NSFont.systemFont(ofSize: 11)
-        for s in sizeOptions { sizePopup.addItem(withTitle: "\(Int(s))pt") }
-        if let idx = sizeOptions.firstIndex(of: fontSize) { sizePopup.selectItem(at: idx) }
-        sizePopup.target = self
-        sizePopup.action = #selector(onSizeChanged(_:))
-        toolbar.addSubview(sizePopup)
-        tx += 56
+                Stepper(value: $fontSize, in: 12...24, step: 1) {
+                    Text("\(Int(fontSize))")
+                        .monospacedDigit()
+                }
+                .frame(width: 86)
 
-        // Spacing popup
-        let spacingPopup = NSPopUpButton(frame: NSRect(x: tx, y: 9, width: 54, height: 22), pullsDown: false)
-        spacingPopup.controlSize = .small
-        spacingPopup.font = NSFont.systemFont(ofSize: 11)
-        for s in spacingOptions { spacingPopup.addItem(withTitle: String(format: "%.1f\u{00d7}", s)) }
-        if let idx = spacingOptions.firstIndex(of: lineSpacing) { spacingPopup.selectItem(at: idx) }
-        spacingPopup.target = self
-        spacingPopup.action = #selector(onSpacingChanged(_:))
-        toolbar.addSubview(spacingPopup)
-        tx += 60
-
-        // Toolbar separator
-        let tbSep = NSView(frame: NSRect(x: tx + 2, y: 10, width: 1, height: 20))
-        tbSep.wantsLayer = true
-        tbSep.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.3).cgColor
-        toolbar.addSubview(tbSep)
-        tx += 10
-
-        // Day/Night toggle
-        let themeControl = NSSegmentedControl(labels: [t("preview.day_mode"), t("preview.night_mode")],
-                                             trackingMode: .selectOne,
-                                             target: self,
-                                             action: #selector(onThemeChanged(_:)))
-        themeControl.frame = NSRect(x: tx, y: 9, width: 100, height: 22)
-        themeControl.controlSize = .small
-        themeControl.font = NSFont.systemFont(ofSize: 10)
-        themeControl.selectedSegment = 0
-        toolbar.addSubview(themeControl)
-        tx += 106
-
-        // View mode: Preview / Source / Split
-        let viewControl = NSSegmentedControl(
-            labels: [t("preview.mode_preview"), t("preview.mode_source"), t("preview.mode_split")],
-            trackingMode: .selectOne,
-            target: self,
-            action: #selector(onViewModeChanged(_:)))
-        viewControl.frame = NSRect(x: tx, y: 9, width: 150, height: 22)
-        viewControl.controlSize = .small
-        viewControl.font = NSFont.systemFont(ofSize: 10)
-        viewControl.selectedSegment = 0
-        toolbar.addSubview(viewControl)
-
-        // ── Content Container ───────────────────────────────────
-
-        let contentX = sidebarWidth + 1
-        let contentW = cw - contentX
-        contentContainer = NSView(frame: NSRect(x: contentX, y: sideY, width: contentW, height: sideH))
-        contentContainer?.autoresizingMask = [.width, .height]
-        content.addSubview(contentContainer!)
-
-        // WebView
-        webView = WKWebView(frame: contentContainer!.bounds)
-        webView?.autoresizingMask = [.width, .height]
-        contentContainer?.addSubview(webView!)
-
-        // Source text view
-        sourceScrollView = NSScrollView(frame: contentContainer!.bounds)
-        sourceScrollView?.autoresizingMask = [.width, .height]
-        sourceScrollView?.hasVerticalScroller = true
-        sourceScrollView?.drawsBackground = true
-        sourceScrollView?.scrollerStyle = .overlay
-
-        sourceTextView = NSTextView(frame: contentContainer!.bounds)
-        sourceTextView?.isEditable = false
-        sourceTextView?.isSelectable = true
-        sourceTextView?.font = NSFont(name: "Menlo", size: 13) ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        sourceTextView?.textContainerInset = NSSize(width: 20, height: 20)
-        sourceTextView?.isAutomaticQuoteSubstitutionEnabled = false
-        sourceTextView?.isAutomaticDashSubstitutionEnabled = false
-        sourceTextView?.backgroundColor = .textBackgroundColor
-        sourceTextView?.textColor = .textColor
-        sourceScrollView?.documentView = sourceTextView
-        contentContainer?.addSubview(sourceScrollView!)
-        sourceScrollView?.isHidden = true
-
-        // Split divider
-        splitDivider = NSView(frame: NSRect(x: 0, y: 0, width: 1, height: sideH))
-        splitDivider?.wantsLayer = true
-        splitDivider?.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        contentContainer?.addSubview(splitDivider!)
-        splitDivider?.isHidden = true
-
-        // Load empty state
-        let emptyHTML = wrapInHTML("<p style=\"color:#999;text-align:center;margin-top:40%\">\(t("preview.no_selection"))</p>")
-        webView?.loadHTMLString(emptyHTML, baseURL: nil)
-
-        // ── Bottom Bar ──────────────────────────────────────────
-
-        let bottomBar = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: cw, height: bottomBarH))
-        bottomBar.autoresizingMask = [.width]
-        bottomBar.blendingMode = .behindWindow
-        bottomBar.material = .titlebar
-        bottomBar.state = .active
-        content.addSubview(bottomBar)
-
-        let hDiv = NSView(frame: NSRect(x: 0, y: bottomBarH - 1, width: cw, height: 1))
-        hDiv.wantsLayer = true
-        hDiv.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        hDiv.autoresizingMask = [.width]
-        bottomBar.addSubview(hDiv)
-
-        wordCountLabel = NSTextField(labelWithString: "")
-        wordCountLabel?.frame = NSRect(x: 16, y: 10, width: 420, height: 16)
-        wordCountLabel?.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        wordCountLabel?.textColor = .tertiaryLabelColor
-        wordCountLabel?.lineBreakMode = .byTruncatingTail
-        bottomBar.addSubview(wordCountLabel!)
-
-        let openEditorBtn = NSButton(frame: NSRect(x: cw - 252, y: 6, width: 116, height: 24))
-        openEditorBtn.title = t("preview.open_editor")
-        openEditorBtn.bezelStyle = .rounded
-        openEditorBtn.controlSize = .small
-        openEditorBtn.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        openEditorBtn.target = self
-        openEditorBtn.action = #selector(onOpenEditor)
-        openEditorBtn.autoresizingMask = [.minXMargin]
-        bottomBar.addSubview(openEditorBtn)
-
-        openBearBtn = NSButton(frame: NSRect(x: cw - 130, y: 6, width: 116, height: 24))
-        openBearBtn?.title = t("preview.open_bear")
-        openBearBtn?.bezelStyle = .rounded
-        openBearBtn?.controlSize = .small
-        openBearBtn?.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        openBearBtn?.target = self
-        openBearBtn?.action = #selector(onOpenBear)
-        openBearBtn?.autoresizingMask = [.minXMargin]
-        bottomBar.addSubview(openBearBtn!)
-
-        // Observe window resize for split-mode layout
-        NotificationCenter.default.addObserver(self, selector: #selector(onWindowResize),
-                                              name: NSWindow.didResizeNotification, object: window)
-
-        updateViewLayout()
+                Button {
+                    darkPreview.toggle()
+                } label: {
+                    Image(systemName: darkPreview ? "moon.fill" : "sun.max")
+                }
+                .help(t("preview.theme"))
+            }
+        }
+        .onAppear {
+            repairFilter()
+            if selectedPath == nil {
+                selectedPath = initialSelection?.filePath ?? filteredNotes.first?.filePath
+            }
+        }
+        .onChange(of: filter) { _ in repairSelection() }
+        .onChange(of: sortMode) { _ in repairSelection() }
+        .onChange(of: searchText) { _ in repairSelection() }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(minWidth: 880, minHeight: 560)
+        .b2ouRefreshesOnLanguageChange()
     }
 
-    // MARK: - View Mode Layout
+    private var browserControls: some View {
+        VStack(spacing: 10) {
+            TextField(t("preview.search"), text: $searchText)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Picker("", selection: $filter) {
+                    ForEach(availableFilters, id: \.self) { item in
+                        Text(item.localizedTitle()).tag(item)
+                    }
+                }
+                .labelsHidden()
+                Picker("", selection: $sortMode) {
+                    ForEach(SortMode.allCases, id: \.self) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                .labelsHidden()
+            }
+        }
+        .padding(12)
+    }
 
-    private func updateViewLayout() {
-        guard let container = contentContainer else { return }
-        let w = container.bounds.width
-        let h = container.bounds.height
+    private var resultFooter: some View {
+        Text(t("preview.result_count").replacingOccurrences(of: "{count}", with: "\(filteredNotes.count)"))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+    }
 
-        switch viewMode {
-        case .preview:
-            sourceScrollView?.isHidden = true
-            splitDivider?.isHidden = true
-            webView?.isHidden = false
-            webView?.frame = NSRect(x: 0, y: 0, width: w, height: h)
-        case .source:
-            sourceScrollView?.isHidden = false
-            splitDivider?.isHidden = true
-            webView?.isHidden = true
-            sourceScrollView?.frame = NSRect(x: 0, y: 0, width: w, height: h)
-        case .split:
-            let halfW = floor(w / 2)
-            sourceScrollView?.isHidden = false
-            splitDivider?.isHidden = false
-            webView?.isHidden = false
-            sourceScrollView?.frame = NSRect(x: 0, y: 0, width: halfW - 1, height: h)
-            splitDivider?.frame = NSRect(x: halfW - 1, y: 0, width: 1, height: h)
-            webView?.frame = NSRect(x: halfW, y: 0, width: w - halfW, height: h)
+    private func repairFilter() {
+        if !availableFilters.contains(filter) {
+            filter = .all
         }
     }
 
-    // MARK: - Table View Data Source
-
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        filteredNotes.count
-    }
-
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let id = NSUserInterfaceItemIdentifier("NoteCell")
-
-        let cell: NSView
-        let titleField: NSTextField
-        let subtitleField: NSTextField
-
-        if let reused = tableView.makeView(withIdentifier: id, owner: self) {
-            cell = reused
-            titleField = reused.viewWithTag(1) as! NSTextField
-            subtitleField = reused.viewWithTag(2) as! NSTextField
-        } else {
-            cell = NSView()
-            cell.identifier = id
-
-            let tf = NSTextField(labelWithString: "")
-            tf.tag = 1
-            tf.font = NSFont.systemFont(ofSize: 13, weight: .regular)
-            tf.lineBreakMode = .byTruncatingTail
-            tf.frame = NSRect(x: 12, y: 26, width: sidebarWidth - 24, height: 18)
-            tf.autoresizingMask = [.width]
-            cell.addSubview(tf)
-            titleField = tf
-
-            let sf = NSTextField(labelWithString: "")
-            sf.tag = 2
-            sf.font = NSFont.systemFont(ofSize: 10)
-            sf.textColor = .tertiaryLabelColor
-            sf.lineBreakMode = .byTruncatingTail
-            sf.frame = NSRect(x: 12, y: 8, width: sidebarWidth - 24, height: 14)
-            sf.autoresizingMask = [.width]
-            cell.addSubview(sf)
-            subtitleField = sf
-        }
-
-        let note = filteredNotes[row]
-        titleField.stringValue = note.title
-
-        var parts: [String] = []
-        if let mod = note.modified {
-            parts.append(cellDateFormatter.string(from: mod))
-        }
-        parts.append(formatCount(note.wordCount, t("preview.words")))
-        if !note.tags.isEmpty {
-            parts.append(note.tags.prefix(2).joined(separator: ", "))
-        }
-        subtitleField.stringValue = parts.joined(separator: "  \u{00b7}  ")
-
-        return cell
-    }
-
-    // MARK: - Table View Delegate
-
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = tableView?.selectedRow ?? -1
-        guard row >= 0, row < filteredNotes.count else {
-            selectedNote = nil
+    private func repairSelection() {
+        repairFilter()
+        guard !filteredNotes.isEmpty else {
+            selectedPath = nil
             return
         }
-        selectedNote = filteredNotes[row]
-        loadNote(filteredNotes[row])
-    }
-
-    // MARK: - Note Loading
-
-    /// Temporary HTML file for WebView preview (enables local image access).
-    private var tempHTMLFile: URL?
-
-    private func loadNote(_ note: NoteMetadata) {
-        guard let content = try? String(contentsOf: note.filePath, encoding: .utf8) else { return }
-        let body = stripFrontMatter(content)
-
-        // Always update both views
-        let html = wrapInHTML(markdownToHTML(body))
-        sourceTextView?.string = body
-
-        // Write HTML to a temp file so WKWebView can access local images
-        // via loadFileURL with read access to the note's directory tree.
-        let noteDir = note.filePath.deletingLastPathComponent()
-        let tmpFile = noteDir.appendingPathComponent(".b2ou-preview.html")
-        do {
-            try html.write(to: tmpFile, atomically: true, encoding: .utf8)
-            // Grant read access to the export root (parent of note dir) so
-            // shared image folders are also accessible.
-            let accessRoot = noteDir.deletingLastPathComponent()
-            webView?.loadFileURL(tmpFile, allowingReadAccessTo: accessRoot)
-            tempHTMLFile = tmpFile
-        } catch {
-            // Fallback: loadHTMLString (images won't load but text works)
-            webView?.loadHTMLString(html, baseURL: noteDir)
+        if let selectedPath, filteredNotes.contains(where: { $0.filePath == selectedPath }) {
+            return
         }
+        selectedPath = filteredNotes.first?.filePath
+    }
 
-        // Status bar
-        var info = "\(note.wordCount) \(t("preview.words"))"
-        if let mod = note.modified {
-            info += "  \u{00b7}  " + cellDateFormatter.string(from: mod)
+    private func matchesFilter(_ note: NoteMetadata, duplicateKeys: Set<String>) -> Bool {
+        switch filter {
+        case .all:
+            return true
+        case .withImages:
+            return note.hasImages
+        case .untagged:
+            return note.tags.isEmpty
+        case .missingImages:
+            return note.missingImageRefs > 0
+        case .duplicateTitles:
+            return duplicateKeys.contains(note.normalizedTitleKey)
+        case .missingBearId:
+            return note.bearId.isEmpty
         }
-        wordCountLabel?.stringValue = info
-        openBearBtn?.isHidden = note.bearId.isEmpty
     }
 
-    private func refreshPreview() {
-        guard let note = selectedNote else { return }
-        loadNote(note)
-    }
-
-    // MARK: - Actions
-
-    @objc private func onSearch(_ sender: NSSearchField) {
-        applySort()
-        tableView?.reloadData()
-    }
-
-    @objc private func onSortChanged(_ sender: NSPopUpButton) {
-        sortMode = SortMode(rawValue: sender.indexOfSelectedItem) ?? .dateModified
-        applySort()
-        tableView?.reloadData()
-    }
-
-    @objc private func onFontChanged(_ sender: NSPopUpButton) {
-        let idx = sender.indexOfSelectedItem
-        guard idx >= 0, idx < fontOptions.count else { return }
-        // Ignore section header selections (empty css)
-        let css = fontOptions[idx].css
-        guard !css.isEmpty else { return }
-        fontFamily = css
-        refreshPreview()
-    }
-
-    @objc private func onSizeChanged(_ sender: NSPopUpButton) {
-        let idx = sender.indexOfSelectedItem
-        guard idx >= 0, idx < sizeOptions.count else { return }
-        fontSize = sizeOptions[idx]
-        refreshPreview()
-    }
-
-    @objc private func onSpacingChanged(_ sender: NSPopUpButton) {
-        let idx = sender.indexOfSelectedItem
-        guard idx >= 0, idx < spacingOptions.count else { return }
-        lineSpacing = spacingOptions[idx]
-        refreshPreview()
-    }
-
-    @objc private func onThemeChanged(_ sender: NSSegmentedControl) {
-        isDarkMode = sender.selectedSegment == 1
-        refreshPreview()
-    }
-
-    @objc private func onViewModeChanged(_ sender: NSSegmentedControl) {
-        viewMode = ViewMode(rawValue: sender.selectedSegment) ?? .preview
-        updateViewLayout()
-    }
-
-    @objc private func onWindowResize(_ notification: Notification) {
-        updateViewLayout()
-    }
-
-    @objc private func onOpenEditor() {
-        guard let note = selectedNote else { return }
-        NSWorkspace.shared.open(note.filePath)
-    }
-
-    @objc private func onOpenBear() {
-        guard let note = selectedNote, !note.bearId.isEmpty,
-              let encodedId = note.bearId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "bear://x-callback-url/open-note?id=\(encodedId)") else { return }
-        NSWorkspace.shared.open(url)
-    }
-
-    // MARK: - Helpers
-
-    private func formatCount(_ n: Int, _ unit: String) -> String {
-        if n >= 1000 {
-            return String(format: "%.1fk %@", Double(n) / 1000.0, unit)
+    private func matchesSearch(_ note: NoteMetadata, tokens: [String]) -> Bool {
+        tokens.allSatisfy { token in
+            note.title.range(of: token, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                || note.tags.joined(separator: " ").range(of: token, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                || note.sourceMarkdown.range(of: token, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         }
-        return "\(n) \(unit)"
     }
+}
 
-    // MARK: - Markdown → HTML
+private struct NotePreviewRow: View {
+    let note: NoteMetadata
+    let queryTokens: [String]
 
-    private func stripFrontMatter(_ content: String) -> String {
-        guard content.hasPrefix("---\n") || content.hasPrefix("---\r\n") else { return content }
-        let lines = content.components(separatedBy: .newlines)
-        for i in 1..<lines.count {
-            if lines[i] == "---" {
-                return lines[(i + 1)...].joined(separator: "\n")
-            }
-        }
-        return content
-    }
-
-    private func markdownToHTML(_ md: String) -> String {
-        let lines = md.components(separatedBy: "\n")
-        var html: [String] = []
-        var inCodeBlock = false
-        var inUL = false
-        var inOL = false
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            // Code blocks
-            if trimmed.hasPrefix("```") {
-                if inCodeBlock {
-                    html.append("</code></pre>")
-                    inCodeBlock = false
-                } else {
-                    closeLists(&html, &inUL, &inOL)
-                    html.append("<pre><code>")
-                    inCodeBlock = true
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(note.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                if note.hasImages {
+                    Image(systemName: "paperclip")
+                        .foregroundStyle(.secondary)
                 }
-                continue
-            }
-            if inCodeBlock {
-                html.append(escapeHTML(line))
-                continue
-            }
-
-            if trimmed.isEmpty {
-                closeLists(&html, &inUL, &inOL)
-                continue
-            }
-
-            // Headings
-            if let (level, text) = parseHeading(trimmed) {
-                closeLists(&html, &inUL, &inOL)
-                html.append("<h\(level)>\(inlineFormat(text))</h\(level)>")
-                continue
-            }
-
-            // Horizontal rule
-            if trimmed.count >= 3 {
-                let chars = trimmed.filter { $0 != " " }
-                if chars.count >= 3, Set(chars).count == 1, "-*_".contains(chars.first!) {
-                    closeLists(&html, &inUL, &inOL)
-                    html.append("<hr>")
-                    continue
+                if note.missingImageRefs > 0 {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
                 }
             }
-
-            // Blockquote
-            if trimmed.hasPrefix("> ") || trimmed == ">" {
-                closeLists(&html, &inUL, &inOL)
-                let text = trimmed.count > 2 ? String(trimmed.dropFirst(2)) : ""
-                html.append("<blockquote><p>\(inlineFormat(text))</p></blockquote>")
-                continue
+            Text(rowDetail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            if let snippet = searchSnippet {
+                Text(snippet)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
             }
+        }
+        .padding(.vertical, 4)
+    }
 
-            // Unordered list
-            if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") {
-                if inOL { html.append("</ol>"); inOL = false }
-                if !inUL { html.append("<ul>"); inUL = true }
-                html.append("<li>\(inlineFormat(String(trimmed.dropFirst(2))))</li>")
-                continue
+    private var rowDetail: String {
+        var parts = ["\(note.wordCount) \(t("preview.words"))"]
+        if let modified = note.modified {
+            parts.append(modified.formatted(date: .abbreviated, time: .omitted))
+        }
+        if !note.tags.isEmpty {
+            parts.append(note.tags.prefix(2).map { "#\($0)" }.joined(separator: " "))
+        }
+        return parts.joined(separator: "  ")
+    }
+
+    private var searchSnippet: String? {
+        guard let token = queryTokens.first(where: {
+            note.sourceMarkdown.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        }), let range = note.sourceMarkdown.range(of: token, options: [.caseInsensitive, .diacriticInsensitive]) else {
+            return nil
+        }
+        let start = note.sourceMarkdown.index(range.lowerBound, offsetBy: -40, limitedBy: note.sourceMarkdown.startIndex) ?? note.sourceMarkdown.startIndex
+        let end = note.sourceMarkdown.index(range.upperBound, offsetBy: 80, limitedBy: note.sourceMarkdown.endIndex) ?? note.sourceMarkdown.endIndex
+        var snippet = String(note.sourceMarkdown[start..<end])
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+        if start > note.sourceMarkdown.startIndex { snippet = "..." + snippet }
+        if end < note.sourceMarkdown.endIndex { snippet += "..." }
+        return snippet
+    }
+}
+
+private struct NoteDetailView: View {
+    let note: NoteMetadata
+    let queryTokens: [String]
+    @Binding var viewMode: ViewMode
+    @Binding var fontSize: Double
+    @Binding var lineSpacing: Double
+    @Binding var darkPreview: Bool
+
+    private var bodyText: String {
+        if note.isBearSourceBacked {
+            return note.sourceMarkdown
+        }
+        if let content = try? String(contentsOf: note.filePath, encoding: .utf8) {
+            return stripFrontMatter(content)
+        }
+        return note.sourceMarkdown
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            detailHeader
+            Divider()
+            switch viewMode {
+            case .preview:
+                MarkdownPreviewWebView(
+                    markdown: bodyText,
+                    baseURL: note.filePath.deletingLastPathComponent(),
+                    fontSize: fontSize,
+                    lineSpacing: lineSpacing,
+                    darkMode: darkPreview,
+                    highlightTerms: queryTokens
+                )
+                .id(note.filePath)
+            case .source:
+                SourceTextView(text: bodyText, fontSize: fontSize)
+            case .split:
+                HSplitView {
+                    MarkdownPreviewWebView(
+                        markdown: bodyText,
+                        baseURL: note.filePath.deletingLastPathComponent(),
+                        fontSize: fontSize,
+                        lineSpacing: lineSpacing,
+                        darkMode: darkPreview,
+                        highlightTerms: queryTokens
+                    )
+                    .id("preview-\(note.filePath)")
+                    SourceTextView(text: bodyText, fontSize: fontSize)
+                }
             }
+        }
+    }
 
-            // Ordered list
-            if let dotIdx = trimmed.firstIndex(of: "."), dotIdx != trimmed.startIndex {
-                let prefix = trimmed[trimmed.startIndex..<dotIdx]
-                if prefix.allSatisfy({ $0.isNumber }) {
-                    let afterDot = trimmed.index(after: dotIdx)
-                    if afterDot < trimmed.endIndex && trimmed[afterDot] == " " {
-                        if inUL { html.append("</ul>"); inUL = false }
-                        if !inOL { html.append("<ol>"); inOL = true }
-                        let text = String(trimmed[trimmed.index(after: afterDot)...])
-                        html.append("<li>\(inlineFormat(text))</li>")
-                        continue
+    private var detailHeader: some View {
+        let actions = noteActionAvailability(for: note)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(note.title)
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(2)
+                    Text(metaText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                HStack {
+                    Button {
+                        b2ouOpen(note.filePath)
+                    } label: {
+                        Label(t("preview.open_editor"), systemImage: "square.and.pencil")
+                    }
+                    .disabled(!actions.canOpenExportedFile)
+                    Button {
+                        b2ouReveal([note.filePath])
+                    } label: {
+                        Label(t("preview.reveal_finder"), systemImage: "finder")
+                    }
+                    .disabled(!actions.canRevealExportedFile)
+                    Button {
+                        openInBear(note)
+                    } label: {
+                        Label(t("preview.open_bear"), systemImage: "link")
+                    }
+                    .disabled(!actions.canOpenInBear)
+                }
+            }
+            if !note.tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(note.tags, id: \.self) { tag in
+                            Text("#\(tag)")
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.quaternary, in: Capsule())
+                        }
                     }
                 }
             }
-
-            // Paragraph
-            closeLists(&html, &inUL, &inOL)
-            html.append("<p>\(inlineFormat(trimmed))</p>")
         }
-
-        if inCodeBlock { html.append("</code></pre>") }
-        closeLists(&html, &inUL, &inOL)
-        return html.joined(separator: "\n")
+        .padding(18)
     }
 
-    private func closeLists(_ html: inout [String], _ inUL: inout Bool, _ inOL: inout Bool) {
-        if inUL { html.append("</ul>"); inUL = false }
-        if inOL { html.append("</ol>"); inOL = false }
-    }
-
-    private func parseHeading(_ line: String) -> (Int, String)? {
-        var level = 0
-        for ch in line {
-            if ch == "#" { level += 1 } else { break }
+    private var metaText: String {
+        var parts = ["\(note.wordCount) \(t("preview.words"))"]
+        if let modified = note.modified {
+            parts.append(modified.formatted(date: .abbreviated, time: .shortened))
         }
-        guard level >= 1, level <= 6, line.count > level else { return nil }
-        let after = line[line.index(line.startIndex, offsetBy: level)]
-        guard after == " " else { return nil }
-        let text = String(line.dropFirst(level + 1))
-        return (level, text)
+        if note.missingImageRefs > 0 {
+            parts.append(t("preview.missing_images").replacingOccurrences(of: "{count}", with: "\(note.missingImageRefs)"))
+        }
+        return parts.joined(separator: "  ")
     }
 
-    private func escapeHTML(_ s: String) -> String {
-        s.replacingOccurrences(of: "&", with: "&amp;")
-         .replacingOccurrences(of: "<", with: "&lt;")
-         .replacingOccurrences(of: ">", with: "&gt;")
+    private func openInBear(_ note: NoteMetadata) {
+        guard let url = b2ouBearNoteURL(noteID: note.bearId) else { return }
+        b2ouOpen(url)
+    }
+}
+
+private struct SourceTextView: View {
+    let text: String
+    let fontSize: Double
+
+    var body: some View {
+        ScrollView {
+            Text(text.isEmpty ? t("workspace.no_preview_text") : text)
+                .font(.system(size: fontSize, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
+private struct EmptyNoteSelectionView: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 42))
+                .foregroundStyle(.secondary)
+            Text(t("preview.no_selection_title"))
+                .font(.title3.weight(.semibold))
+            Text(t("preview.no_selection_detail"))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct MarkdownPreviewWebView: NSViewRepresentable {
+    let markdown: String
+    let baseURL: URL
+    let fontSize: Double
+    let lineSpacing: Double
+    let darkMode: Bool
+    let highlightTerms: [String]
+
+    func makeNSView(context: Context) -> WKWebView {
+        let view = WKWebView()
+        view.setValue(false, forKey: "drawsBackground")
+        return view
     }
 
-    private func inlineFormat(_ s: String) -> String {
-        var r = escapeHTML(s)
-        // Images
-        r = r.replacingOccurrences(of: #"!\[([^\]]*)\]\(([^)]+)\)"#,
-                                   with: #"<img src="$2" alt="$1">"#, options: .regularExpression)
-        // Links
-        r = r.replacingOccurrences(of: #"\[([^\]]+)\]\(([^)]+)\)"#,
-                                   with: #"<a href="$2">$1</a>"#, options: .regularExpression)
-        // Bold
-        r = r.replacingOccurrences(of: #"\*\*(.+?)\*\*"#,
-                                   with: "<strong>$1</strong>", options: .regularExpression)
-        r = r.replacingOccurrences(of: #"__(.+?)__"#,
-                                   with: "<strong>$1</strong>", options: .regularExpression)
-        // Italic (single *)
-        r = r.replacingOccurrences(of: #"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)"#,
-                                   with: "<em>$1</em>", options: .regularExpression)
-        // Inline code
-        r = r.replacingOccurrences(of: #"`([^`]+)`"#,
-                                   with: "<code>$1</code>", options: .regularExpression)
-        // Strikethrough
-        r = r.replacingOccurrences(of: #"~~(.+?)~~"#,
-                                   with: "<del>$1</del>", options: .regularExpression)
-        // Highlight
-        r = r.replacingOccurrences(of: #"==(.+?)=="#,
-                                   with: "<mark>$1</mark>", options: .regularExpression)
-        return r
+    func updateNSView(_ nsView: WKWebView, context: Context) {
+        nsView.loadHTMLString(wrapHTML(markdownToHTML(markdown)), baseURL: baseURL)
     }
 
-    // MARK: - HTML Wrapper
-
-    /// Sanitize a CSS value to prevent injection (strip semicolons, braces, etc.)
-    private func cssEscape(_ value: String) -> String {
-        value.filter { !";{}()<>\"'\\".contains($0) }
+    private func markdownToHTML(_ markdown: String) -> String {
+        do {
+            return try Down(markdownString: markdown).toHTML()
+        } catch {
+            return "<pre>\(escapeHTML(markdown))</pre>"
+        }
     }
 
-    private func wrapInHTML(_ body: String) -> String {
-        let bg = isDarkMode ? "#1c1c1e" : "#ffffff"
-        let fg = isDarkMode ? "#e5e5e7" : "#1d1d1f"
-        let codeBg = isDarkMode ? "#2c2c2e" : "#f2f2f7"
-        let border = isDarkMode ? "#38383a" : "#e5e5ea"
-        let link = isDarkMode ? "#64a8ff" : "#0071e3"
-        let quote = isDarkMode ? "#98989d" : "#86868b"
-        let markBg = isDarkMode ? "#5a4a00" : "#fff3cd"
-        let safeFont = cssEscape(fontFamily)
-
+    private func wrapHTML(_ body: String) -> String {
+        let bg = darkMode ? "#1c1c1e" : "#ffffff"
+        let fg = darkMode ? "#e5e5e7" : "#1d1d1f"
+        let muted = darkMode ? "#98989d" : "#6e6e73"
+        let codeBg = darkMode ? "#2c2c2e" : "#f2f2f7"
+        let border = darkMode ? "#38383a" : "#e5e5ea"
+        let markJSON = jsonArrayLiteral(highlightTerms)
         return """
-        <!DOCTYPE html>
+        <!doctype html>
         <html>
-        <head><meta charset="utf-8">
+        <head>
+        <meta charset="utf-8">
         <style>
         * { box-sizing: border-box; }
+        html, body { background: \(bg); }
         body {
-            font-family: \(safeFont);
-            font-size: \(Int(fontSize))px;
-            line-height: \(String(format: "%.1f", lineSpacing));
             color: \(fg);
-            background: \(bg);
-            padding: 32px 40px;
-            margin: 0;
+            font: \(Int(fontSize))px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+            line-height: \(String(format: "%.2f", lineSpacing));
+            margin: 0 auto;
+            max-width: 860px;
+            padding: 42px 52px;
             -webkit-font-smoothing: antialiased;
-            -webkit-text-size-adjust: 100%;
         }
-        h1, h2, h3, h4, h5, h6 {
-            font-weight: 600;
-            margin-top: 1.4em;
-            margin-bottom: 0.5em;
-            letter-spacing: -0.01em;
-        }
-        h1 { font-size: 1.8em; font-weight: 700; letter-spacing: -0.02em; }
-        h2 { font-size: 1.4em; border-bottom: 1px solid \(border); padding-bottom: 0.3em; }
-        h3 { font-size: 1.15em; }
-        p { margin: 0.7em 0; }
-        a { color: \(link); text-decoration: none; }
-        a:hover { text-decoration: underline; }
-        code {
-            background: \(codeBg);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: 'SF Mono', 'Menlo', monospace;
-            font-size: 0.86em;
-        }
-        pre {
-            background: \(codeBg);
-            padding: 16px 18px;
-            border-radius: 8px;
-            overflow-x: auto;
-            line-height: 1.5;
-        }
-        pre code {
-            background: none;
-            padding: 0;
-            font-size: 0.86em;
-        }
-        blockquote {
-            border-left: 3px solid \(border);
-            margin: 1em 0;
-            padding-left: 18px;
-            color: \(quote);
-        }
-        img {
-            max-width: 100%;
-            border-radius: 8px;
-            margin: 10px 0;
-        }
-        hr {
-            border: none;
-            border-top: 1px solid \(border);
-            margin: 28px 0;
-        }
-        mark {
-            background: \(markBg);
-            padding: 1px 4px;
-            border-radius: 3px;
-        }
-        del { opacity: 0.45; }
-        ul, ol { padding-left: 24px; }
-        li { margin: 5px 0; }
+        h1, h2, h3 { letter-spacing: 0; line-height: 1.2; }
+        h1 { font-size: 1.9em; }
+        h2 { border-bottom: 1px solid \(border); padding-bottom: .25em; }
+        a { color: #0a84ff; }
+        blockquote { color: \(muted); border-left: 3px solid \(border); margin-left: 0; padding-left: 1em; }
+        code { background: \(codeBg); border-radius: 4px; padding: 2px 5px; }
+        pre { background: \(codeBg); border-radius: 6px; overflow-x: auto; padding: 14px; }
+        img { max-width: 100%; border-radius: 6px; }
+        mark { background: #fff3a3; color: #1d1d1f; border-radius: 2px; padding: 0 2px; }
         </style>
         </head>
-        <body>\(body)</body>
+        <body>
+        \(body)
+        <script>
+        const terms = \(markJSON);
+        if (terms.length) {
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          const nodes = [];
+          while (walker.nextNode()) nodes.push(walker.currentNode);
+          for (const node of nodes) {
+            let html = node.nodeValue;
+            for (const term of terms) {
+              if (!term) continue;
+              const escaped = term.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+              html = html.replace(new RegExp(escaped, "gi"), match => `<mark>${match}</mark>`);
+            }
+            if (html !== node.nodeValue) {
+              const span = document.createElement("span");
+              span.innerHTML = html;
+              node.parentNode.replaceChild(span, node);
+            }
+          }
+        }
+        </script>
+        </body>
         </html>
         """
     }
+
+    private func jsonArrayLiteral(_ values: [String]) -> String {
+        let trimmed = values.map { String($0.prefix(80)) }.filter { !$0.isEmpty }
+        guard let data = try? JSONSerialization.data(withJSONObject: trimmed, options: []),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
 }
 
-// MARK: - Module-Level Show Function
+private func stripFrontMatter(_ content: String) -> String {
+    guard content.hasPrefix("---\n") || content.hasPrefix("---\r\n") || content.hasPrefix("---\r") else { return content }
+    let lines = content.components(separatedBy: .newlines)
+    for i in 1..<lines.count where lines[i].trimmingCharacters(in: .whitespaces) == "---" {
+        return lines[(i + 1)...].joined(separator: "\n")
+    }
+    return content
+}
+
+private func escapeHTML(_ string: String) -> String {
+    string
+        .replacingOccurrences(of: "&", with: "&amp;")
+        .replacingOccurrences(of: "<", with: "&lt;")
+        .replacingOccurrences(of: ">", with: "&gt;")
+}
 
 private var activePreview: NotePreviewController?
 
-func showNotePreview(store: NoteStore) {
+func showNotePreview(store: NoteStore, selecting note: NoteMetadata? = nil, filter: NoteBrowserFilter = .all) {
     if activePreview == nil {
         activePreview = NotePreviewController()
     }
-    activePreview?.show(store: store)
+    activePreview?.show(store: store, selecting: note, filter: filter)
 }

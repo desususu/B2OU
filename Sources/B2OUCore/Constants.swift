@@ -40,8 +40,8 @@ public let reHideTags = try! NSRegularExpression(pattern: ##"(\n)[ \t]*(\#[^\s#]
 // MARK: - Markdown Structure
 
 public let reMarkdownHeading = try! NSRegularExpression(pattern: #"^#+\s*"#, options: .anchorsMatchLines)
-public let reCleanTitle = try! NSRegularExpression(pattern: #"[\/\\:]"#)
-public let reTrailingDash = try! NSRegularExpression(pattern: #"-$"#)
+public let reCleanTitle = try! NSRegularExpression(pattern: #"[\/\\:*?"<>|\x00-\x1f]+"#)
+public let reTrailingDash = try! NSRegularExpression(pattern: #"-+$"#)
 public let reBearHighlight = try! NSRegularExpression(pattern: #"(?<!\:)\:\:(?!\:)(.+?)(?<!\:)\:\:(?!\:)"#)
 public let reInvalidDirChars = try! NSRegularExpression(pattern: #"[<>:"|?*\x00-\x1f]"#)
 public let reMultipleUnderscores = try! NSRegularExpression(pattern: #"_+"#)
@@ -68,5 +68,5 @@ public let sentinelFiles: Set<String> = [
     ".sync-time.log", ".export-time.log", ".b2ou-manifest",
 ]
 
-public let exportSkipDirs: Set<String> = ["BearImages", ".obsidian"]
+public let exportSkipDirs: Set<String> = ["BearImages", ".obsidian", ".b2ou-backups", ".b2ou"]
 public let exportSkipDirPrefixes: [String] = [".Ulysses"]

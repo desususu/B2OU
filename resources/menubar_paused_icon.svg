@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
+  <!-- macOS menu bar template icon — paused state -->
+  <!-- Same stroke-based bear glyph with pause badge -->
+
+  <!-- Left ear -->
+  <circle cx="14" cy="14" r="5" fill="none" stroke="#000000" stroke-width="2"/>
+
+  <!-- Right ear -->
+  <circle cx="30" cy="14" r="5" fill="none" stroke="#000000" stroke-width="2"/>
+
+  <!-- Head -->
+  <ellipse cx="22" cy="24" rx="11" ry="10" fill="#FFFFFF" stroke="#000000" stroke-width="2"/>
+
+  <!-- Left eye -->
+  <circle cx="18" cy="22" r="2" fill="#000000"/>
+
+  <!-- Right eye -->
+  <circle cx="26" cy="22" r="2" fill="#000000"/>
+
+  <!-- Nose -->
+  <ellipse cx="22" cy="27" rx="2.2" ry="1.6" fill="#000000"/>
+
+  <!-- Pause badge (lower-right) -->
+  <!-- White halo creates visual separation from bear outline -->
+  <circle cx="35" cy="35" r="7" fill="#FFFFFF"/>
+  <!-- Badge circle -->
+  <circle cx="35" cy="35" r="5.5" fill="#000000"/>
+  <!-- Pause bars (white cutouts in badge) -->
+  <rect x="32.5" y="32" width="2" height="6" rx="0.5" fill="#FFFFFF"/>
+  <rect x="35.5" y="32" width="2" height="6" rx="0.5" fill="#FFFFFF"/>
+</svg>

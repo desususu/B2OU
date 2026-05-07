@@ -1,6 +1,6 @@
 // CLI.swift — Command-line interface for b2ou.
 //
-// Subcommands: export, status, clean
+// Subcommands: export, status, clean, rebuild-state
 
 import ArgumentParser
 import B2OUCore
@@ -19,7 +19,7 @@ struct B2OUCommand: ParsableCommand {
         commandName: "b2ou",
         abstract: "Bear to Obsidian / Ulysses export tool",
         version: appVersion,
-        subcommands: [Export.self, Status.self, Clean.self]
+        subcommands: [Export.self, Status.self, Clean.self, RebuildState.self]
     )
 }
 
@@ -44,6 +44,12 @@ struct Export: ParsableCommand {
 
     @Option(name: .long, help: "Override path for the BearImages asset folder")
     var images: String?
+
+    @Option(name: .long, help: "Bear read source: auto, bearcli, or sqlite")
+    var source: String?
+
+    @Option(name: .long, help: "Path to Bear's bearcli executable")
+    var bearcli: String?
 
     @Option(name: .long, help: "Export format: md, tb, or both")
     var format: String = "md"
@@ -125,6 +131,8 @@ struct Export: ParsableCommand {
             if let out { cfg.exportPath = URL(fileURLWithPath: out) }
             if let outTb { cfg.exportPathTB = URL(fileURLWithPath: outTb) }
             if let images { cfg.assetsPath = URL(fileURLWithPath: images) }
+            if let source { cfg.bearSource = source }
+            if let bearcli { cfg.bearCLIPath = URL(fileURLWithPath: bearcli) }
             return cfg
         }
 
@@ -136,6 +144,8 @@ struct Export: ParsableCommand {
         return ExportConfig(
             exportPath: URL(fileURLWithPath: out),
             exportPathTB: outTb.map { URL(fileURLWithPath: $0) },
+            bearCLIPath: bearcli.map { URL(fileURLWithPath: $0) } ?? defaultBearCLIPath,
+            bearSource: source ?? "auto",
             assetsPath: images.map { URL(fileURLWithPath: $0) },
             exportFormat: format,
             makeTagFolders: tagFolders,
@@ -158,14 +168,38 @@ struct Status: ParsableCommand {
     @Option(name: .long, help: "Export folder to inspect")
     var out: String
 
+    @Option(name: .long, help: "Bear read source: auto, bearcli, or sqlite")
+    var source: String = "auto"
+
+    @Option(name: .long, help: "Path to Bear's bearcli executable")
+    var bearcli: String?
+
     @Flag(name: .shortAndLong, help: "Enable verbose logging")
     var verbose = false
 
     func run() {
         setupLogging(verbose: verbose)
 
-        let cfg = ExportConfig(exportPath: URL(fileURLWithPath: out))
-        let (maxMod, noteCount) = bearDBSignature(dbPath: cfg.bearDB)
+        let cfg = ExportConfig(
+            exportPath: URL(fileURLWithPath: out),
+            bearCLIPath: bearcli.map { URL(fileURLWithPath: $0) } ?? defaultBearCLIPath,
+            bearSource: source
+        )
+
+        let maxMod: Double
+        let noteCount: Int
+        let usedBearCLI: Bool
+        if shouldReadWithBearCLI(config: cfg),
+           let sig = try? BearCLIClient(executable: cfg.bearCLIPath).signature(location: "notes") {
+            maxMod = sig.latestModified
+            noteCount = sig.noteCount
+            usedBearCLI = true
+        } else {
+            let dbSig = bearDBSignature(dbPath: cfg.bearDB)
+            maxMod = dbSig.maxMod
+            noteCount = dbSig.noteCount
+            usedBearCLI = false
+        }
 
         if noteCount < 0 {
             print("Bear database:     not found at \(cfg.bearDB.path)")
@@ -175,7 +209,8 @@ struct Status: ParsableCommand {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         let modStr = formatter.string(from: Date(timeIntervalSince1970: maxMod))
-        print("Bear database:     \(noteCount) active notes (last modified: \(modStr))")
+        let sourceLabel = usedBearCLI ? "Bear CLI" : "Bear database"
+        print("\(sourceLabel):     \(noteCount) active notes (last modified: \(modStr))")
 
         let fm = FileManager.default
         let exportPath = cfg.exportPath
@@ -187,9 +222,15 @@ struct Status: ParsableCommand {
         var fileCount = 0
         var bundleCount = 0
         if let enumerator = fm.enumerator(at: exportPath, includingPropertiesForKeys: [.isDirectoryKey]) {
+            let skipSet = exportSkipDirs.union([".b2ou-trash"])
             while let url = enumerator.nextObject() as? URL {
                 let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
                 if isDir {
+                    let name = url.lastPathComponent
+                    if skipSet.contains(name) || exportSkipDirPrefixes.contains(where: { name.hasPrefix($0) }) {
+                        enumerator.skipDescendants()
+                        continue
+                    }
                     if url.pathExtension == "textbundle" {
                         bundleCount += 1
                         enumerator.skipDescendants()
@@ -204,16 +245,74 @@ struct Status: ParsableCommand {
         print("Export folder:     \(fileCount + bundleCount) files in \(exportPath.path)")
 
         if fm.fileExists(atPath: cfg.exportTsFile.path) {
-            if let dbMod = (try? fm.attributesOfItem(atPath: cfg.bearDB.path))?[.modificationDate] as? Date,
-               let tsMod = (try? fm.attributesOfItem(atPath: cfg.exportTsFile.path))?[.modificationDate] as? Date {
-                if dbMod > tsMod {
-                    print("Pending changes:   database modified since last export")
+            if let tsMod = (try? fm.attributesOfItem(atPath: cfg.exportTsFile.path))?[.modificationDate] as? Date {
+                let sig = sourceSignature(config: cfg)
+                if sig.byteCount < 0 {
+                    print("Pending changes:   source unavailable")
+                } else if sig.lastModified > tsMod.timeIntervalSince1970 {
+                    print("Pending changes:   source modified since last export")
                 } else {
                     print("Pending changes:   none (up to date)")
                 }
             }
         } else {
             print("Pending changes:   never exported")
+        }
+    }
+}
+
+// MARK: - Rebuild State Subcommand
+
+struct RebuildState: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "rebuild-state",
+        abstract: "Preview or rebuild the sidecar Bear-to-file mapping without modifying notes"
+    )
+
+    @Option(name: .long, help: "Export folder to inspect")
+    var out: String
+
+    @Option(name: .long, help: "Path to Bear's bearcli executable")
+    var bearcli: String?
+
+    @Flag(name: .long, help: "Write .b2ou/state.json. Without this flag, only preview.")
+    var write = false
+
+    @Flag(name: .shortAndLong, help: "Enable verbose logging")
+    var verbose = false
+
+    func run() throws {
+        setupLogging(verbose: verbose)
+
+        let exportPath = URL(fileURLWithPath: out)
+        let client = BearCLIClient(executable: bearcli.map { URL(fileURLWithPath: $0) } ?? defaultBearCLIPath)
+        guard client.isAvailable else {
+            printErr("Error: Bear CLI is not available at \(client.executable.path)")
+            throw ExitCode(rawValue: 1)
+        }
+
+        let notes = try client.listNoteMetadata(location: "notes")
+        let report = rebuildSyncStatePlan(exportPath: exportPath, bearNotes: notes, write: write)
+
+        print("Mode:              \(report.previewOnly ? "preview" : "write")")
+        print("Bear notes:        \(report.bearActiveNotes)")
+        print("Managed files:     \(report.managedExportFiles)")
+        print("Unmanaged files:   \(report.unmanagedExportFiles)")
+        print("Planned bindings:  \(report.plannedBindings)")
+        print("Unbound files:     \(report.unboundManagedFiles)")
+        print("Unbound Bear notes:\(report.unboundBearNotes)")
+        print("Methods:           \(formatCounts(report.bindingMethods))")
+        print("Risk levels:       \(formatCounts(report.bindingRiskLevels))")
+
+        if write {
+            print("State written:     \(report.statePath.path)")
+        } else {
+            print("State preview:     \(report.statePath.path)")
+            print("Next:              rerun with --write to create the sidecar")
+        }
+
+        if !report.isSafeToWrite {
+            printErr("Warning: the mapping has unbound or high-risk entries. Review before using it for sync.")
         }
     }
 }
@@ -258,67 +357,11 @@ struct Clean: ParsableCommand {
             }
         }
 
-        var removed = 0
-        if let enumerator = fm.enumerator(at: exportPath, includingPropertiesForKeys: [.isDirectoryKey]) {
-            let skipSet: Set<String> = [".b2ou-trash", ".obsidian", "BearImages"]
-            while let url = enumerator.nextObject() as? URL {
-                let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                let name = url.lastPathComponent
-                if isDir {
-                    if skipSet.contains(name) || name.hasPrefix(".Ulysses") {
-                        enumerator.skipDescendants()
-                        continue
-                    }
-                    if name.hasSuffix(".textbundle") {
-                        try? fm.removeItem(at: url)
-                        removed += 1
-                        enumerator.skipDescendants()
-                    }
-                } else {
-                    let ext = url.pathExtension.lowercased()
-                    if ext == "md" || ext == "txt" || ext == "markdown" {
-                        try? fm.removeItem(at: url)
-                        removed += 1
-                    }
-                }
-            }
+        let result = cleanManagedExport(exportPath: exportPath, keepImages: keepImages)
+        if result.removedImages {
+            log("Removed BearImages folder.")
         }
-
-        if !keepImages {
-            let imagesPath = exportPath.appendingPathComponent("BearImages")
-            if fm.fileExists(atPath: imagesPath.path) {
-                try? fm.removeItem(at: imagesPath)
-                log("Removed BearImages folder.")
-            }
-        }
-
-        for name in [".export-time.log", ".b2ou-manifest"] {
-            let p = exportPath.appendingPathComponent(name)
-            try? fm.removeItem(at: p)
-        }
-
-        let trashPath = exportPath.appendingPathComponent(".b2ou-trash")
-        if fm.fileExists(atPath: trashPath.path) {
-            try? fm.removeItem(at: trashPath)
-            log("Removed .b2ou-trash folder.")
-        }
-
-        // Clean empty subdirectories
-        if let enumerator = fm.enumerator(at: exportPath, includingPropertiesForKeys: [.isDirectoryKey],
-                                           options: [.producesRelativePathURLs]) {
-            var dirs: [URL] = []
-            while let url = enumerator.nextObject() as? URL {
-                let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                if isDir { dirs.append(url) }
-            }
-            for d in dirs.sorted(by: { $0.path > $1.path }) {
-                if let contents = try? fm.contentsOfDirectory(atPath: d.path), contents.isEmpty {
-                    try? fm.removeItem(at: d)
-                }
-            }
-        }
-
-        log("Cleaned \(removed) exported files from \(exportPath.path)")
+        log("Cleaned \(result.removedFiles) managed exported files from \(exportPath.path)")
     }
 }
 
@@ -338,15 +381,27 @@ private func runExport(_ cfg: ExportConfig) -> Int {
         try? FileManager.default.createDirectory(at: sub.exportPath, withIntermediateDirectories: true)
         let result = exportNotes(config: sub)
         if result.changedCount < 0 {
-            log("Export already running for \(sub.exportPath.path) — skipping.")
+            if let message = result.errorMessage, !message.isEmpty {
+                printErr("Error: \(message)")
+            } else {
+                log("Export already running for \(sub.exportPath.path) — skipping.")
+            }
+            continue
+        }
+        if result.hasConflicts {
+            printErr(B2OUError.dirtyExportFiles(result.conflictPaths.sorted { $0.path < $1.path }).localizedDescription)
             continue
         }
         writeTimestamps(config: sub)
 
-        if result.changedCount > 0 {
-            let removed = cleanupStaleNotes(exportPath: sub.exportPath, expectedPaths: result.expectedPaths, onDelete: sub.onDelete)
+        var removed = 0
+        if sub.onlyNoteUUIDs.isEmpty {
+            removed = cleanupStaleNotes(exportPath: sub.exportPath, expectedPaths: result.expectedPaths, onDelete: sub.onDelete)
             if removed > 0 { log("Cleaned \(removed) stale files from export folder.") }
+            writeManifest(exportPath: sub.exportPath, paths: result.expectedPaths)
+        }
 
+        if result.changedCount > 0 || removed > 0 {
             if maintenanceDue(exportPath: sub.exportPath) {
                 if sub.exportImageRepository {
                     let orphans = cleanupOrphanRootImages(config: sub)
@@ -356,10 +411,6 @@ private func runExport(_ cfg: ExportConfig) -> Int {
                 if purged > 0 { log("Purged \(purged) old trash folders.") }
                 touchMaintenance(exportPath: sub.exportPath)
             }
-        }
-
-        if !result.expectedPaths.isEmpty {
-            writeManifest(exportPath: sub.exportPath, paths: result.expectedPaths)
         }
 
         totalCount = max(totalCount, result.noteCount)
@@ -385,7 +436,7 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
     signal(SIGINT) { _ in shutdownFlag = true }
     signal(SIGTERM) { _ in shutdownFlag = true }
 
-    var lastSignature: (Double, Int) = (0.0, -1)
+    var lastSignature = (lastModified: 0.0, byteCount: Int64(-1))
     var lastExportTime: Double = 0
     var consecutiveFailures = 0
     var noteCount = 0
@@ -394,8 +445,8 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
 
     while !shutdownFlag {
         let shouldSleep: Bool = autoreleasepool {
-            let sig = bearDBSignature(dbPath: cfg.bearDB)
-            if sig == lastSignature || sig.noteCount < 0 {
+            let sig = sourceSignature(config: cfg)
+            if sig == lastSignature || sig.byteCount < 0 {
                 Thread.sleep(forTimeInterval: idleSleep)
                 idleSleep = min(idleMax, idleSleep * 1.5)
                 return false
@@ -409,11 +460,11 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
                 return false
             }
 
-            if lastSignature.1 >= 0 {
+            if lastSignature.byteCount >= 0 {
                 log("Bear database changed, waiting for writes to settle...")
                 var waited = 0.0
                 while !shutdownFlag && waited < debounce * 3 {
-                    if dbIsQuiet(dbPath: cfg.bearDB, quietSeconds: debounce) { break }
+                    if sourceIsQuiet(config: cfg, quietSeconds: debounce) { break }
                     Thread.sleep(forTimeInterval: 1.0)
                     waited += 1.0
                 }
@@ -426,7 +477,7 @@ private func runWatchLoop(cfg: ExportConfig, debounce: Double, statusFile: URL?)
             consecutiveFailures = 0
             writeStatus(statusFile, state: "idle", noteCount: noteCount, exportPath: cfg.exportPath.path)
 
-            lastSignature = bearDBSignature(dbPath: cfg.bearDB)
+            lastSignature = sourceSignature(config: cfg)
             return true
         }
         if shouldSleep {
@@ -459,6 +510,11 @@ private func printErr(_ message: String) {
     stderr.write(Data("\(message)\n".utf8))
 }
 
+private func formatCounts(_ counts: [String: Int]) -> String {
+    if counts.isEmpty { return "-" }
+    return counts.keys.sorted().map { "\($0)=\(counts[$0] ?? 0)" }.joined(separator: ", ")
+}
+
 private func writeStatus(_ statusFile: URL?, state: String,
                           noteCount: Int = 0, error: String? = nil,
                           exportPath: String = "") {
@@ -474,7 +530,16 @@ private func writeStatus(_ statusFile: URL?, state: String,
     guard let jsonData = try? JSONSerialization.data(withJSONObject: data),
           let json = String(data: jsonData, encoding: .utf8) else { return }
     let tmp = statusFile.deletingLastPathComponent().appendingPathComponent(statusFile.lastPathComponent + ".tmp")
-    try? json.write(to: tmp, atomically: false, encoding: .utf8)
-    try? FileManager.default.moveItem(at: tmp, to: statusFile)
+    let fm = FileManager.default
+    do {
+        try fm.createDirectory(at: statusFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try json.write(to: tmp, atomically: false, encoding: .utf8)
+        if fm.fileExists(atPath: statusFile.path) {
+            _ = try fm.replaceItemAt(statusFile, withItemAt: tmp)
+        } else {
+            try fm.moveItem(at: tmp, to: statusFile)
+        }
+    } catch {
+        try? fm.removeItem(at: tmp)
+    }
 }
-

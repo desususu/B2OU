@@ -53,8 +53,10 @@ public final class SQLiteConnection {
         let rc = sqlite3_open_v2(path, &db, flags, nil)
         guard rc == SQLITE_OK, db != nil else {
             let msg = db.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+            if let db { sqlite3_close(db) }
             throw B2OUError.databaseOpenFailed(msg)
         }
+        sqlite3_busy_timeout(db, 5_000)
     }
 
     deinit {
@@ -65,14 +67,17 @@ public final class SQLiteConnection {
 
     // MARK: - Query Helpers
 
-    public func query(_ sql: String, params: [Any] = []) -> [[String: Any]] {
+    public func forEachRow(
+        _ sql: String,
+        params: [Any] = [],
+        _ body: ([String: Any]) -> Void
+    ) {
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
 
         bindParams(stmt: stmt!, params: params)
 
-        var rows: [[String: Any]] = []
         let colCount = sqlite3_column_count(stmt)
 
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -92,8 +97,13 @@ public final class SQLiteConnection {
                     row[name] = nil as Any?
                 }
             }
-            rows.append(row)
+            body(row)
         }
+    }
+
+    public func query(_ sql: String, params: [Any] = []) -> [[String: Any]] {
+        var rows: [[String: Any]] = []
+        forEachRow(sql, params: params) { rows.append($0) }
         return rows
     }
 
@@ -111,7 +121,7 @@ public final class SQLiteConnection {
             switch param {
             case let v as String:
                 v.withCString { cStr in
-                    sqlite3_bind_text(stmt, idx, cStr, -1, SQLiteConnection.SQLITE_TRANSIENT)
+                    _ = sqlite3_bind_text(stmt, idx, cStr, -1, SQLiteConnection.SQLITE_TRANSIENT)
                 }
             case let v as Int64:
                 sqlite3_bind_int64(stmt, idx, v)
@@ -128,17 +138,55 @@ public final class SQLiteConnection {
     // MARK: - Backup API
 
     public func backupTo(_ destPath: String) throws {
+        let destURL = URL(fileURLWithPath: destPath)
+        try FileManager.default.createDirectory(
+            at: destURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
         var destDb: OpaquePointer?
-        guard sqlite3_open(destPath, &destDb) == SQLITE_OK else {
-            throw B2OUError.databaseOpenFailed("Cannot open backup destination")
+        let openRc = sqlite3_open_v2(
+            destPath,
+            &destDb,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
+            nil
+        )
+        guard openRc == SQLITE_OK, let destDb else {
+            let msg = destDb.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+            if let destDb { sqlite3_close(destDb) }
+            throw B2OUError.databaseOpenFailed("Cannot open backup destination: \(msg)")
         }
         defer { sqlite3_close(destDb) }
+        sqlite3_busy_timeout(destDb, 5_000)
 
-        guard let backup = sqlite3_backup_init(destDb, "main", db, "main") else {
-            throw B2OUError.databaseOpenFailed("Cannot init backup")
+        guard let sourceDb = db else {
+            throw B2OUError.databaseOpenFailed("Source database is closed")
         }
-        sqlite3_backup_step(backup, -1)
-        sqlite3_backup_finish(backup)
+        guard let backup = sqlite3_backup_init(destDb, "main", sourceDb, "main") else {
+            let msg = String(cString: sqlite3_errmsg(destDb))
+            throw B2OUError.databaseOpenFailed("Cannot init backup: \(msg)")
+        }
+
+        var stepRc = SQLITE_OK
+        var retries = 0
+        repeat {
+            stepRc = sqlite3_backup_step(backup, 256)
+            if stepRc == SQLITE_BUSY || stepRc == SQLITE_LOCKED {
+                retries += 1
+                if retries > 100 { break }
+                Thread.sleep(forTimeInterval: 0.05)
+            } else {
+                retries = 0
+            }
+        } while stepRc == SQLITE_OK || stepRc == SQLITE_BUSY || stepRc == SQLITE_LOCKED
+
+        let finishRc = sqlite3_backup_finish(backup)
+        guard stepRc == SQLITE_DONE, finishRc == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(destDb))
+            throw B2OUError.databaseOpenFailed(
+                "Backup failed (step=\(stepRc), finish=\(finishRc)): \(msg)"
+            )
+        }
     }
 }
 
@@ -155,23 +203,29 @@ public func copyAndOpen(dbPath: URL) throws -> (SQLiteConnection, URL?) {
     do {
         let src = try SQLiteConnection(path: dbPath.path, readOnly: true)
         try src.backupTo(tmpPath.path)
-        // Set restrictive permissions
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o600], ofItemAtPath: tmpPath.path
         )
-        let conn = try SQLiteConnection(path: tmpPath.path)
+        let conn = try SQLiteConnection(path: tmpPath.path, readOnly: true)
         return (conn, tmpPath)
     } catch {
-        // Fall back to reading live DB
         try? FileManager.default.removeItem(at: tmpPath)
-        let conn = try SQLiteConnection(path: dbPath.path, readOnly: true)
-        return (conn, nil)
+        throw error
     }
 }
 
 // MARK: - Schema Helpers
 
 private let allowedTables: Set<String> = ["ZSFNOTE", "ZSFNOTEFILE", "ZSFNOTETAG"]
+
+private func hasTable(_ conn: SQLiteConnection, table: String) -> Bool {
+    guard allowedTables.contains(table) else { return false }
+    let rows = conn.query(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        params: [table]
+    )
+    return !rows.isEmpty
+}
 
 private func hasColumn(_ conn: SQLiteConnection, table: String, column: String) -> Bool {
     guard allowedTables.contains(table) else { return false }
@@ -181,36 +235,63 @@ private func hasColumn(_ conn: SQLiteConnection, table: String, column: String) 
     return rows.contains { ($0["name"] as? String) == column }
 }
 
+public func validateBearSchema(conn: SQLiteConnection) -> Bool {
+    guard hasTable(conn, table: "ZSFNOTE") else { return false }
+    let requiredNoteColumns = [
+        "ZTITLE",
+        "ZTEXT",
+        "ZCREATIONDATE",
+        "ZMODIFICATIONDATE",
+        "ZUNIQUEIDENTIFIER",
+        "Z_PK",
+        "ZTRASHED",
+        "ZARCHIVED",
+    ]
+    return requiredNoteColumns.allSatisfy { hasColumn(conn, table: "ZSFNOTE", column: $0) }
+}
+
+private func activeNoteWhereClause(conn: SQLiteConnection, alias: String? = nil) -> String {
+    let prefix = alias.map { "\($0)." } ?? ""
+    var whereClause = "\(prefix)ZTRASHED = 0 AND \(prefix)ZARCHIVED = 0"
+    if hasColumn(conn, table: "ZSFNOTE", column: "ZENCRYPTED") {
+        whereClause += " AND \(prefix)ZENCRYPTED = 0"
+    }
+    return whereClause
+}
+
 // MARK: - Note Queries
 
 public func iterNotes(conn: SQLiteConnection) -> [BearNote] {
-    let hasEncrypted = hasColumn(conn, table: "ZSFNOTE", column: "ZENCRYPTED")
-    var whereClause = "ZTRASHED = 0 AND ZARCHIVED = 0"
-    if hasEncrypted { whereClause += " AND ZENCRYPTED = 0" }
+    var notes: [BearNote] = []
+    forEachNote(conn: conn) { notes.append($0) }
+    return notes
+}
 
-    let rows = conn.query(
+public func forEachNote(conn: SQLiteConnection, _ body: (BearNote) -> Void) {
+    let whereClause = activeNoteWhereClause(conn: conn)
+
+    conn.forEachRow(
         "SELECT ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, " +
         "ZUNIQUEIDENTIFIER, Z_PK FROM ZSFNOTE WHERE \(whereClause)"
-    )
-
-    return rows.compactMap { row -> BearNote? in
-        guard let text = row["ZTEXT"] as? String else { return nil }
-        return BearNote(
+    ) { row in
+        guard let text = row["ZTEXT"] as? String else { return }
+        body(BearNote(
             title: (row["ZTITLE"] as? String) ?? "",
             text: text.trimmingTrailingWhitespace(),
             creationDate: (row["ZCREATIONDATE"] as? Double) ?? 0,
             modifiedDate: (row["ZMODIFICATIONDATE"] as? Double) ?? 0,
             uuid: (row["ZUNIQUEIDENTIFIER"] as? String) ?? "",
             pk: (row["Z_PK"] as? Int64) ?? 0
-        )
+        ))
     }
 }
 
 public func getNoteByUUID(conn: SQLiteConnection, uuid: String) -> BearNote? {
+    let whereClause = activeNoteWhereClause(conn: conn)
     guard let row = conn.queryOne(
         "SELECT ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, " +
         "ZUNIQUEIDENTIFIER, Z_PK FROM ZSFNOTE " +
-        "WHERE ZTRASHED = 0 AND ZUNIQUEIDENTIFIER = ?",
+        "WHERE \(whereClause) AND ZUNIQUEIDENTIFIER = ?",
         params: [uuid]
     ) else { return nil }
     return rowToNote(row)
@@ -218,10 +299,11 @@ public func getNoteByUUID(conn: SQLiteConnection, uuid: String) -> BearNote? {
 
 public func getNoteByTitle(conn: SQLiteConnection, title: String) -> BearNote? {
     guard !title.isEmpty else { return nil }
+    let whereClause = activeNoteWhereClause(conn: conn)
     guard let row = conn.queryOne(
         "SELECT ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE, " +
         "ZUNIQUEIDENTIFIER, Z_PK FROM ZSFNOTE " +
-        "WHERE ZTRASHED = 0 AND ZARCHIVED = 0 AND ZTITLE = ? " +
+        "WHERE \(whereClause) AND ZTITLE = ? " +
         "ORDER BY ZMODIFICATIONDATE DESC LIMIT 1",
         params: [title]
     ) else { return nil }
@@ -240,9 +322,10 @@ private func rowToNote(_ row: [String: Any]) -> BearNote {
 }
 
 public func getNoteModification(conn: SQLiteConnection, uuid: String) -> Double? {
+    let whereClause = activeNoteWhereClause(conn: conn)
     guard let row = conn.queryOne(
         "SELECT ZMODIFICATIONDATE FROM ZSFNOTE " +
-        "WHERE ZTRASHED = 0 AND ZUNIQUEIDENTIFIER = ?",
+        "WHERE \(whereClause) AND ZUNIQUEIDENTIFIER = ?",
         params: [uuid]
     ) else { return nil }
     return row["ZMODIFICATIONDATE"] as? Double
@@ -271,10 +354,11 @@ public func buildNoteFileMap(conn: SQLiteConnection) -> [Int64: [String: String]
 }
 
 public func getNoteFilesByUUID(conn: SQLiteConnection, noteUUID: String) -> [NoteFile] {
-    conn.query(
+    let whereClause = activeNoteWhereClause(conn: conn, alias: "N")
+    return conn.query(
         "SELECT F.ZFILENAME, F.ZUNIQUEIDENTIFIER FROM ZSFNOTEFILE F " +
         "JOIN ZSFNOTE N ON F.ZNOTE = N.Z_PK " +
-        "WHERE N.ZUNIQUEIDENTIFIER = ? AND N.ZTRASHED = 0",
+        "WHERE N.ZUNIQUEIDENTIFIER = ? AND \(whereClause)",
         params: [noteUUID]
     ).compactMap { row in
         guard let filename = row["ZFILENAME"] as? String,
@@ -286,16 +370,41 @@ public func getNoteFilesByUUID(conn: SQLiteConnection, noteUUID: String) -> [Not
 // MARK: - Change Detection
 
 public func bearDBSignature(dbPath: URL) -> (maxMod: Double, noteCount: Int) {
-    guard let conn = try? SQLiteConnection(path: dbPath.path, readOnly: true),
-          let row = conn.queryOne(
-              "SELECT MAX(ZMODIFICATIONDATE), COUNT(*) " +
-              "FROM ZSFNOTE WHERE ZTRASHED = 0 AND ZARCHIVED = 0"
-          ) else {
+    guard let conn = try? SQLiteConnection(path: dbPath.path, readOnly: true) else {
+        return (0.0, -1)
+    }
+
+    let whereClause = activeNoteWhereClause(conn: conn)
+
+    guard let row = conn.queryOne(
+        "SELECT MAX(ZMODIFICATIONDATE), COUNT(*) FROM ZSFNOTE WHERE \(whereClause)"
+    ) else {
         return (0.0, -1)
     }
     let maxMod = (row["MAX(ZMODIFICATIONDATE)"] as? Double) ?? 0
     let count = (row["COUNT(*)"] as? Int64) ?? 0
     return (coreDataToUnix(maxMod), Int(count))
+}
+
+public func bearDBFileSignature(dbPath: URL) -> (lastModified: Double, byteCount: Int64) {
+    let fm = FileManager.default
+    var newest: Double = 0
+    var totalBytes: Int64 = 0
+    var found = false
+
+    for suffix in ["", "-wal", "-shm"] {
+        let path = dbPath.path + suffix
+        guard let attrs = try? fm.attributesOfItem(atPath: path) else { continue }
+        found = true
+        if let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 {
+            newest = max(newest, mtime)
+        }
+        if let size = attrs[.size] as? NSNumber {
+            totalBytes += size.int64Value
+        }
+    }
+
+    return found ? (newest, totalBytes) : (0.0, -1)
 }
 
 public func dbIsQuiet(dbPath: URL, quietSeconds: TimeInterval) -> Bool {

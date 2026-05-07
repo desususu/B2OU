@@ -23,11 +23,14 @@ public func readManifest(exportPath: URL) -> Set<String> {
 
 public func writeManifest(exportPath: URL, paths: Set<URL>) {
     let manifest = exportPath.appendingPathComponent(manifestName)
+    let manifestPath = manifest.standardizedFileURL.path
+    let exportRoot = exportPath.standardizedFileURL.path
     let lines = paths
         .compactMap { url -> String? in
-            guard url != manifest else { return nil }
-            let rel = url.path.hasPrefix(exportPath.path)
-                ? String(url.path.dropFirst(exportPath.path.count + 1))
+            let path = url.standardizedFileURL.path
+            guard path != manifestPath else { return nil }
+            let rel = path.hasPrefix(exportRoot + "/")
+                ? String(path.dropFirst(exportRoot.count + 1))
                 : url.lastPathComponent
             return rel
         }
@@ -36,11 +39,20 @@ public func writeManifest(exportPath: URL, paths: Set<URL>) {
     let tmp = manifest.deletingLastPathComponent().appendingPathComponent(".\(manifestName).tmp")
     do {
         try content.write(to: tmp, atomically: false, encoding: .utf8)
-        try FileManager.default.moveItem(at: tmp, to: manifest)
+        try replaceFile(at: manifest, with: tmp)
     } catch {
         try? FileManager.default.removeItem(at: tmp)
         // Fallback: write directly
         try? content.write(to: manifest, atomically: true, encoding: .utf8)
+    }
+}
+
+private func replaceFile(at destination: URL, with tmp: URL) throws {
+    let fm = FileManager.default
+    if fm.fileExists(atPath: destination.path) {
+        _ = try fm.replaceItemAt(destination, withItemAt: tmp)
+    } else {
+        try fm.moveItem(at: tmp, to: destination)
     }
 }
 
@@ -55,7 +67,12 @@ func isUntitledPlaceholder(_ note: BearNote) -> Bool {
 
 // MARK: - YAML Front Matter
 
-public func generateFrontMatter(note: BearNote, text: String) -> String {
+public func generateFrontMatter(
+    note: BearNote,
+    text: String,
+    tags explicitTags: [String]? = nil,
+    extraFields: [(String, String)] = []
+) -> String {
     let created = Date(timeIntervalSince1970: coreDataToUnix(note.creationDate))
     let modified = Date(timeIntervalSince1970: coreDataToUnix(note.modifiedDate))
 
@@ -64,15 +81,18 @@ public func generateFrontMatter(note: BearNote, text: String) -> String {
     let createdStr = formatter.string(from: created)
     let modifiedStr = formatter.string(from: modified)
 
-    let tags = extractTags(text)
+    let tags = explicitTags ?? extractTags(text)
 
     var lines = [
         "---",
         "title: \(yamlEscape(note.title))",
         "created: \(createdStr)",
         "modified: \(modifiedStr)",
-        "bear_id: \(note.uuid)",
     ]
+    for (key, value) in extraFields where !value.isEmpty {
+        guard !["bear_id", "bear_hash", "b2ou_source"].contains(key) else { continue }
+        lines.append("\(key): \(yamlEscape(value))")
+    }
     if !tags.isEmpty {
         lines.append("tags:")
         for tag in tags {
@@ -187,6 +207,7 @@ public func cleanupStaleNotes(exportPath: URL, expectedPaths: Set<URL>, onDelete
     let fm = FileManager.default
     guard fm.fileExists(atPath: exportPath.path) else { return 0 }
 
+    let expectedPathStrings = Set(expectedPaths.map { $0.standardizedFileURL.path })
     let managedFiles = readManifest(exportPath: exportPath)
     var trashDir: URL? = nil
     if onDelete == "trash" {
@@ -225,7 +246,7 @@ public func cleanupStaleNotes(exportPath: URL, expectedPaths: Set<URL>, onDelete
                 continue
             }
             if name.hasSuffix(".textbundle") {
-                if !expectedPaths.contains(fileURL) {
+                if !expectedPathStrings.contains(fileURL.standardizedFileURL.path) {
                     let rel = relativePathString(from: exportPath, to: fileURL)
                     if !rel.isEmpty && managedFiles.contains(rel) {
                         if dispose(path: fileURL, isDir: true, trashDir: trashDir) { removed += 1 }
@@ -240,7 +261,7 @@ public func cleanupStaleNotes(exportPath: URL, expectedPaths: Set<URL>, onDelete
 
         // File
         if sentinelFiles.contains(name) || name == manifestName { continue }
-        if expectedPaths.contains(fileURL) { continue }
+        if expectedPathStrings.contains(fileURL.standardizedFileURL.path) { continue }
 
         let ext = fileURL.pathExtension.lowercased()
         guard ext == "md" || ext == "txt" || ext == "markdown" else { continue }
@@ -258,6 +279,108 @@ public func cleanupStaleNotes(exportPath: URL, expectedPaths: Set<URL>, onDelete
     }
 
     return removed
+}
+
+public struct CleanExportResult: Sendable, Equatable {
+    public let removedFiles: Int
+    public let removedSentinels: Int
+    public let removedImages: Bool
+
+    public init(removedFiles: Int, removedSentinels: Int, removedImages: Bool) {
+        self.removedFiles = removedFiles
+        self.removedSentinels = removedSentinels
+        self.removedImages = removedImages
+    }
+}
+
+public func cleanManagedExport(exportPath: URL, keepImages: Bool = false) -> CleanExportResult {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: exportPath.path) else {
+        return CleanExportResult(removedFiles: 0, removedSentinels: 0, removedImages: false)
+    }
+
+    let managedFiles = readManifest(exportPath: exportPath)
+    var removedFiles = 0
+    for rel in managedFiles.sorted(by: >) {
+        guard let url = safeManagedManifestURL(exportPath: exportPath, relativePath: rel) else { continue }
+        guard fm.fileExists(atPath: url.path) else { continue }
+        do {
+            try fm.removeItem(at: url)
+            removedFiles += 1
+        } catch {
+            continue
+        }
+    }
+
+    if let enumerator = fm.enumerator(at: exportPath, includingPropertiesForKeys: [.isDirectoryKey]) {
+        var dirs: [URL] = []
+        while let url = enumerator.nextObject() as? URL {
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            if isDir {
+                let name = url.lastPathComponent
+                if exportSkipDirs.contains(name) || name == ".b2ou-trash" {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                if exportSkipDirPrefixes.contains(where: { name.hasPrefix($0) }) {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                dirs.append(url)
+            }
+        }
+        for dir in dirs.sorted(by: { $0.path > $1.path }) {
+            if let contents = try? fm.contentsOfDirectory(atPath: dir.path), contents.isEmpty {
+                try? fm.removeItem(at: dir)
+            }
+        }
+    }
+
+    var removedImages = false
+    if !keepImages {
+        let imagesPath = exportPath.appendingPathComponent("BearImages")
+        if fm.fileExists(atPath: imagesPath.path) {
+            do {
+                try fm.removeItem(at: imagesPath)
+                removedImages = true
+            } catch {
+                removedImages = false
+            }
+        }
+    }
+
+    var removedSentinels = 0
+    for name in [".export-time.log", ".b2ou-manifest", syncStateDirectoryName, ".b2ou-trash"] {
+        let url = exportPath.appendingPathComponent(name)
+        guard fm.fileExists(atPath: url.path) else { continue }
+        do {
+            try fm.removeItem(at: url)
+            removedSentinels += 1
+        } catch {
+            continue
+        }
+    }
+
+    return CleanExportResult(
+        removedFiles: removedFiles,
+        removedSentinels: removedSentinels,
+        removedImages: removedImages
+    )
+}
+
+private func safeManagedManifestURL(exportPath: URL, relativePath: String) -> URL? {
+    let trimmed = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    guard !(trimmed as NSString).isAbsolutePath else { return nil }
+    let components = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+    guard components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+        return nil
+    }
+
+    let root = exportPath.standardizedFileURL.path
+    let url = exportPath.appendingPathComponent(trimmed).standardizedFileURL
+    guard url.path.hasPrefix(root + "/") else { return nil }
+    return url
 }
 
 private func dispose(path: URL, isDir: Bool, trashDir: URL?) -> Bool {
@@ -307,6 +430,130 @@ public func purgeOldTrash(exportPath: URL, maxAgeDays: Int = 30) -> Int {
     }
 
     return removed
+}
+
+// MARK: - Backup Utilities
+
+public let backupFilePrefix = "bear-backup-"
+public let backupLockName = ".backup.lock"
+public let interruptedBackupGrace: TimeInterval = 30 * 60
+
+public struct BackupResult: Sendable, Equatable {
+    public let success: Bool
+    public let backupURL: URL?
+    public let errorMessage: String?
+    public let rotationRemovedCount: Int
+    public let cleanedInterruptedCount: Int
+
+    public init(
+        success: Bool,
+        backupURL: URL? = nil,
+        errorMessage: String? = nil,
+        rotationRemovedCount: Int = 0,
+        cleanedInterruptedCount: Int = 0
+    ) {
+        self.success = success
+        self.backupURL = backupURL
+        self.errorMessage = errorMessage
+        self.rotationRemovedCount = rotationRemovedCount
+        self.cleanedInterruptedCount = cleanedInterruptedCount
+    }
+}
+
+public func isBackupFile(_ url: URL) -> Bool {
+    url.lastPathComponent.hasPrefix(backupFilePrefix)
+        && (url.pathExtension == "sqlite" || url.pathExtension == "bearclibackup")
+}
+
+public func completeBackupURLs(in dir: URL) -> [URL] {
+    guard let urls = try? FileManager.default.contentsOfDirectory(
+        at: dir,
+        includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+    ) else { return [] }
+    return urls.filter { isBackupFile($0) }
+}
+
+public func latestBackupTime(in dir: URL) -> Date? {
+    completeBackupURLs(in: dir).compactMap { url in
+        let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+        return values?.creationDate ?? values?.contentModificationDate
+    }.max()
+}
+
+public func backupConflictsWithExportRoots(_ backupDir: URL, exportRoots: [URL]) -> Bool {
+    let backupPath = backupDir.standardizedFileURL.path
+    let backupPathWithSlash = backupPath.hasSuffix("/") ? backupPath : backupPath + "/"
+    return exportRoots.contains { root in
+        let rootPath = root.standardizedFileURL.path
+        let rootPathWithSlash = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        return rootPath == backupPath
+            || rootPathWithSlash.hasPrefix(backupPathWithSlash)
+            || backupPathWithSlash.hasPrefix(rootPathWithSlash)
+    }
+}
+
+public func rotateBackups(in dir: URL, maxKeep: Int) -> Int {
+    let fm = FileManager.default
+    guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey])
+        .filter({ isBackupFile($0) })
+        .sorted(by: { a, b in
+            let da = (try? a.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            let db = (try? b.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            return da > db
+        }) else { return 0 }
+
+    let limit = max(1, maxKeep)
+    var removed = 0
+    if files.count > limit {
+        for file in files[limit...] {
+            do {
+                try fm.removeItem(at: file)
+                removed += 1
+            } catch {
+                continue
+            }
+        }
+    }
+    return removed
+}
+
+public func cleanupInterruptedBackups(in dir: URL) -> Int {
+    let fm = FileManager.default
+    let cutoff = Date().addingTimeInterval(-interruptedBackupGrace)
+    var removed = 0
+
+    if let urls = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey], options: []) {
+        for url in urls {
+            let name = url.lastPathComponent
+            guard name.hasPrefix(".\(backupFilePrefix)"), name.contains(".tmp-") else { continue }
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            if modified < cutoff {
+                try? fm.removeItem(at: url)
+                removed += 1
+            }
+        }
+    }
+
+    return removed
+}
+
+public func acquireBackupLock(in dir: URL) -> Int32? {
+    let fm = FileManager.default
+    try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    let lockPath = dir.appendingPathComponent(backupLockName)
+    let fd = open(lockPath.path, O_WRONLY | O_CREAT, 0o600)
+    guard fd >= 0 else { return nil }
+    guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+        close(fd)
+        return nil
+    }
+    return fd
+}
+
+public func releaseBackupLock(_ fd: Int32) {
+    flock(fd, LOCK_UN)
+    close(fd)
 }
 
 // MARK: - Maintenance Throttling
@@ -415,6 +662,65 @@ public func makeTextBundle(
     }
 }
 
+public func makeTextBundleUsingBearCLI(
+    text: String,
+    filepath: URL,
+    modUnix: Double,
+    createdCoreData: Double,
+    noteID: String,
+    attachments: [BearCLIAttachment],
+    bearCLI: BearCLIClient
+) {
+    let fm = FileManager.default
+    let bundlePath = URL(fileURLWithPath: filepath.path + ".textbundle")
+    let existingAssets = fm.fileExists(atPath: bundlePath.path) ? bundlePath.appendingPathComponent("assets") : nil
+
+    let tmpBundle = fm.temporaryDirectory.appendingPathComponent(".b2ou-tb-\(UUID().uuidString)")
+    let tmpAssets = tmpBundle.appendingPathComponent("assets")
+    try? fm.createDirectory(at: tmpAssets, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: tmpBundle) }
+
+    let info: [String: Any] = [
+        "transient": true,
+        "type": "net.daringfireball.markdown",
+        "version": 2,
+        "creatorIdentifier": "net.shinyfrog.bear",
+        "bear_uuid": noteID,
+        "bear_source": "bearcli",
+    ]
+
+    do {
+        let processedText = processExportImagesTextbundleUsingBearCLI(
+            text: text,
+            bundleAssets: tmpAssets,
+            noteID: noteID,
+            attachments: attachments,
+            bearCLI: bearCLI,
+            existingAssets: existingAssets
+        )
+
+        writeNoteFile(filepath: tmpBundle.appendingPathComponent("text.md"),
+                      content: processedText, modifiedUnix: modUnix, createdCoreData: 0)
+
+        let infoData = try JSONSerialization.data(withJSONObject: info, options: .prettyPrinted)
+        let infoStr = String(data: infoData, encoding: .utf8) ?? "{}"
+        writeNoteFile(filepath: tmpBundle.appendingPathComponent("info.json"),
+                      content: infoStr, modifiedUnix: modUnix, createdCoreData: 0)
+
+        if fm.fileExists(atPath: bundlePath.path) {
+            try fm.removeItem(at: bundlePath)
+        }
+        try fm.moveItem(at: tmpBundle, to: bundlePath)
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: modUnix)],
+                             ofItemAtPath: bundlePath.path)
+        if createdCoreData > 0 {
+            setCreationDate(filepath: bundlePath, unixTimestamp: coreDataToUnix(createdCoreData))
+        }
+    } catch {
+        // defer block handles cleanup of tmpBundle
+    }
+}
+
 // MARK: - Timestamps
 
 public func writeTimestamps(config: ExportConfig) {
@@ -433,11 +739,11 @@ public func checkDBModified(config: ExportConfig) -> Bool {
 
     for cfg in configs {
         guard fm.fileExists(atPath: cfg.exportTsFile.path) else { return true }
-        guard let dbAttrs = try? fm.attributesOfItem(atPath: cfg.bearDB.path),
-              let tsAttrs = try? fm.attributesOfItem(atPath: cfg.exportTsFile.path),
-              let dbMod = dbAttrs[.modificationDate] as? Date,
+        guard let tsAttrs = try? fm.attributesOfItem(atPath: cfg.exportTsFile.path),
               let tsMod = tsAttrs[.modificationDate] as? Date else { return true }
-        if dbMod > tsMod { return true }
+        let sig = sourceSignature(config: cfg)
+        if sig.byteCount < 0 { return true }
+        if sig.lastModified > tsMod.timeIntervalSince1970 { return true }
     }
     return false
 }
@@ -468,32 +774,168 @@ public struct ExportResult {
     public let noteCount: Int
     public let expectedPaths: Set<URL>
     public let changedCount: Int
+    public let conflictPaths: Set<URL>
+    public let errorMessage: String?
+
+    public init(
+        noteCount: Int,
+        expectedPaths: Set<URL>,
+        changedCount: Int,
+        conflictPaths: Set<URL> = [],
+        errorMessage: String? = nil
+    ) {
+        self.noteCount = noteCount
+        self.expectedPaths = expectedPaths
+        self.changedCount = changedCount
+        self.conflictPaths = conflictPaths
+        self.errorMessage = errorMessage
+    }
+
+    public var hasConflicts: Bool {
+        !conflictPaths.isEmpty
+    }
 }
 
 public func exportNotes(config: ExportConfig) -> ExportResult {
+    if shouldReadWithBearCLI(config: config) {
+        let client = BearCLIClient(executable: config.bearCLIPath)
+        do {
+            return try exportNotesUsingBearCLI(config: config, client: client)
+        } catch {
+            if config.bearSource.lowercased() == "bearcli" {
+                return ExportResult(
+                    noteCount: 0,
+                    expectedPaths: [],
+                    changedCount: -1,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+    return exportNotesFromSQLite(config: config)
+}
+
+private enum ExistingTargetDecision {
+    case write
+    case skip(TargetFingerprint)
+    case conflict
+}
+
+private struct TargetFingerprint {
+    let hash: String
+    let size: Int64
+    let mtime: Double
+}
+
+private func targetFileMetadata(_ url: URL) -> (size: Int64, mtime: Double)? {
+    let fm = FileManager.default
+    let sourceURL: URL
+    if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+        sourceURL = url.appendingPathComponent("text.md")
+    } else {
+        sourceURL = url
+    }
+    guard let attrs = try? fm.attributesOfItem(atPath: sourceURL.path) else { return nil }
+    let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+    let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+    return (size, mtime)
+}
+
+private func sameFileObservation(_ binding: B2OUSyncBinding, _ metadata: (size: Int64, mtime: Double)) -> Bool {
+    binding.lastSeenSize == metadata.size && abs(binding.lastSeenMTime - metadata.mtime) < 0.001
+}
+
+private func sourceIsNewerThanTarget(sourceModifiedUnix: Double, targetMTime: Double) -> Bool {
+    sourceModifiedUnix > 0 && targetMTime < sourceModifiedUnix
+}
+
+private func makeExportSyncBindingWithFingerprint(
+    exportPath: URL,
+    target: URL,
+    bearID: String,
+    bearHash: String,
+    bearModified: String,
+    bearTitle: String,
+    fingerprint: TargetFingerprint
+) -> B2OUSyncBinding {
+    B2OUSyncBinding(
+        obsidianPath: syncRelativePath(from: exportPath, to: target),
+        bearID: bearID,
+        bearHash: bearHash,
+        bearModified: bearModified,
+        bearTitleKey: syncTitleKey(cleanTitle(bearTitle)),
+        lastExportedObsidianHash: fingerprint.hash,
+        lastSeenMTime: fingerprint.mtime,
+        lastSeenSize: fingerprint.size,
+        matchMethod: "export",
+        riskLevel: "low",
+        managedByManifest: true
+    )
+}
+
+private func existingTargetDecision(
+    target: URL,
+    exportPath: URL,
+    sourceModifiedUnix: Double,
+    stateBindings: [String: B2OUSyncBinding]
+) -> ExistingTargetDecision {
+    guard FileManager.default.fileExists(atPath: target.path) else {
+        return .write
+    }
+
+    let relativePath = syncRelativePath(from: exportPath, to: target)
+    guard let binding = stateBindings[relativePath],
+          !binding.lastExportedObsidianHash.isEmpty else {
+        return .conflict
+    }
+
+    guard let metadata = targetFileMetadata(target) else { return .conflict }
+    let cachedFingerprint = TargetFingerprint(
+        hash: binding.lastExportedObsidianHash,
+        size: metadata.size,
+        mtime: metadata.mtime
+    )
+    if sameFileObservation(binding, metadata) {
+        return sourceIsNewerThanTarget(sourceModifiedUnix: sourceModifiedUnix, targetMTime: metadata.mtime)
+            ? .write
+            : .skip(cachedFingerprint)
+    }
+
+    let fingerprint = fileFingerprint(target)
+    guard !fingerprint.hash.isEmpty else { return .conflict }
+    guard fingerprint.hash == binding.lastExportedObsidianHash else {
+        return .conflict
+    }
+
+    let actualFingerprint = TargetFingerprint(
+        hash: fingerprint.hash,
+        size: fingerprint.size,
+        mtime: fingerprint.mtime
+    )
+    return sourceIsNewerThanTarget(sourceModifiedUnix: sourceModifiedUnix, targetMTime: fingerprint.mtime)
+        ? .write
+        : .skip(actualFingerprint)
+}
+
+private func exportNotesUsingBearCLI(config: ExportConfig, client: BearCLIClient) throws -> ExportResult {
     guard let lockFd = acquireLock(exportPath: config.exportPath) else {
-        return ExportResult(noteCount: 0, expectedPaths: [], changedCount: -1)
+        return ExportResult(
+            noteCount: 0,
+            expectedPaths: [],
+            changedCount: -1,
+            errorMessage: B2OUError.exportLocked(config.exportPath).localizedDescription
+        )
     }
     defer { releaseLock(lockFd) }
 
-    let conn: SQLiteConnection
-    let tmpPath: URL?
-    do {
-        (conn, tmpPath) = try copyAndOpen(dbPath: config.bearDB)
-    } catch {
-        return ExportResult(noteCount: 0, expectedPaths: [], changedCount: -1)
-    }
-    defer {
-        if let tmpPath {
-            try? FileManager.default.removeItem(at: tmpPath)
-        }
-    }
-
-    let allFileMaps = buildNoteFileMap(conn: conn)
+    let cliNotes = try client.listNotes(location: "notes")
     var noteCount = 0
     var changedCount = 0
     var expectedPaths = Set<URL>()
     var reservedTargets = Set<URL>()
+    var syncBindings: [B2OUSyncBinding] = []
+    var conflictPaths = Set<URL>()
+    let stateBindings = syncBindingsByPath(exportPath: config.exportPath)
 
     func targetFor(basePath: URL, asTextbundle: Bool) -> URL {
         let suffix = asTextbundle ? ".textbundle" : ".md"
@@ -531,8 +973,259 @@ public func exportNotes(config: ExportConfig) -> ExportResult {
     let fm = FileManager.default
     try? fm.createDirectory(at: config.exportPath, withIntermediateDirectories: true)
 
-    for note in iterNotes(conn: conn) {
+    for cliNote in cliNotes {
+        let note = cliNote.bearNote
+        if !config.onlyNoteUUIDs.isEmpty && !config.onlyNoteUUIDs.contains(note.uuid) { continue }
         if isUntitledPlaceholder(note) { continue }
+
+        let filename = generateFilename(note: note, naming: config.naming)
+        let modUnix = cliNote.modifiedUnix
+        let rawText = note.text
+
+        let fileList: [String]
+        if config.makeTagFolders {
+            fileList = subPathFromTags(
+                basePath: config.exportPath.path,
+                filename: filename,
+                tags: cliNote.tags.isEmpty ? extractTags(rawText) : cliNote.tags,
+                makeTagFolders: true,
+                multiTagFolders: config.multiTagFolders,
+                onlyExportTags: config.onlyExportTags,
+                excludeTags: config.excludeTags
+            )
+        } else {
+            let noteTags = cliNote.tags.isEmpty ? extractTags(rawText) : cliNote.tags
+            if !config.excludeTags.isEmpty {
+                let isExcluded = noteTags.contains { nt in
+                    config.excludeTags.contains { et in
+                        nt.lowercased().hasPrefix(et.lowercased())
+                    }
+                }
+                if isExcluded { continue }
+            }
+            fileList = [config.exportPath.appendingPathComponent(filename).path]
+        }
+
+        if fileList.isEmpty { continue }
+        noteCount += 1
+
+        let attachments: [BearCLIAttachment]
+        if cliNote.needsAttachmentListRefresh {
+            attachments = (try? client.listAttachments(noteID: cliNote.id)) ?? cliNote.attachments
+        } else {
+            attachments = cliNote.attachments
+        }
+
+        var seenPaths = Set<String>()
+        for filepathStr in fileList {
+            guard !seenPaths.contains(filepathStr) else { continue }
+            seenPaths.insert(filepathStr)
+
+            var filepath = URL(fileURLWithPath: filepathStr)
+            let asTextbundle = config.exportAsTextbundles && shouldUseTextbundle(text: rawText, filepath: filepath, config: config)
+            filepath = uniqueBasePath(basePath: filepath, asTextbundle: asTextbundle, noteUUID: note.uuid)
+            let target = targetFor(basePath: filepath, asTextbundle: asTextbundle)
+
+            switch existingTargetDecision(
+                target: target,
+                exportPath: config.exportPath,
+                sourceModifiedUnix: modUnix,
+                stateBindings: stateBindings
+            ) {
+            case .skip(let fingerprint):
+                expectedPaths.insert(target)
+                syncBindings.append(makeExportSyncBindingWithFingerprint(
+                    exportPath: config.exportPath,
+                    target: target,
+                    bearID: cliNote.id,
+                    bearHash: cliNote.hash,
+                    bearModified: cliNote.modifiedISO,
+                    bearTitle: note.title,
+                    fingerprint: fingerprint
+                ))
+                continue
+            case .conflict:
+                expectedPaths.insert(target)
+                conflictPaths.insert(target)
+                continue
+            case .write:
+                break
+            }
+
+            let text = normaliseBearMarkdown(rawText)
+            var frontMatter = ""
+            if config.yamlFrontMatter {
+                frontMatter = generateFrontMatter(
+                    note: note,
+                    text: text,
+                    tags: cliNote.tags.isEmpty ? nil : cliNote.tags
+                )
+            }
+            var processedText = text
+            if config.hideTags {
+                processedText = hideTags(processedText)
+            }
+
+            changedCount += 1
+
+            if asTextbundle {
+                makeTextBundleUsingBearCLI(
+                    text: frontMatter + processedText,
+                    filepath: filepath,
+                    modUnix: modUnix,
+                    createdCoreData: note.creationDate,
+                    noteID: cliNote.id,
+                    attachments: attachments,
+                    bearCLI: client
+                )
+                expectedPaths.insert(target)
+                syncBindings.append(makeExportSyncBinding(
+                    exportPath: config.exportPath,
+                    target: target,
+                    bearID: cliNote.id,
+                    bearHash: cliNote.hash,
+                    bearModified: cliNote.modifiedISO,
+                    bearTitle: note.title
+                ))
+            } else if config.exportImageRepository, let assetsPath = config.assetsPath {
+                let processed = processExportImagesUsingBearCLI(
+                    text: processedText,
+                    filepath: filepath,
+                    noteID: cliNote.id,
+                    attachments: attachments,
+                    bearCLI: client,
+                    assetsPath: assetsPath,
+                    exportPath: config.exportPath
+                )
+                writeNoteFile(filepath: target, content: frontMatter + processed,
+                              modifiedUnix: modUnix, createdCoreData: note.creationDate)
+                expectedPaths.insert(target)
+                syncBindings.append(makeExportSyncBinding(
+                    exportPath: config.exportPath,
+                    target: target,
+                    bearID: cliNote.id,
+                    bearHash: cliNote.hash,
+                    bearModified: cliNote.modifiedISO,
+                    bearTitle: note.title
+                ))
+            } else {
+                writeNoteFile(filepath: target, content: frontMatter + processedText,
+                              modifiedUnix: modUnix, createdCoreData: note.creationDate)
+                expectedPaths.insert(target)
+                syncBindings.append(makeExportSyncBinding(
+                    exportPath: config.exportPath,
+                    target: target,
+                    bearID: cliNote.id,
+                    bearHash: cliNote.hash,
+                    bearModified: cliNote.modifiedISO,
+                    bearTitle: note.title
+                ))
+            }
+        }
+    }
+
+    if conflictPaths.isEmpty {
+        writeExportSyncState(
+            exportPath: config.exportPath,
+            bindings: syncBindings,
+            merge: !config.onlyNoteUUIDs.isEmpty
+        )
+    }
+    return ExportResult(
+        noteCount: noteCount,
+        expectedPaths: expectedPaths,
+        changedCount: changedCount,
+        conflictPaths: conflictPaths
+    )
+}
+
+private func exportNotesFromSQLite(config: ExportConfig) -> ExportResult {
+    guard let lockFd = acquireLock(exportPath: config.exportPath) else {
+        return ExportResult(
+            noteCount: 0,
+            expectedPaths: [],
+            changedCount: -1,
+            errorMessage: B2OUError.exportLocked(config.exportPath).localizedDescription
+        )
+    }
+    defer { releaseLock(lockFd) }
+
+    let conn: SQLiteConnection
+    let tmpPath: URL?
+    do {
+        (conn, tmpPath) = try copyAndOpen(dbPath: config.bearDB)
+    } catch {
+        return ExportResult(
+            noteCount: 0,
+            expectedPaths: [],
+            changedCount: -1,
+            errorMessage: error.localizedDescription
+        )
+    }
+    defer {
+        if let tmpPath {
+            try? FileManager.default.removeItem(at: tmpPath)
+        }
+    }
+
+    guard validateBearSchema(conn: conn) else {
+        return ExportResult(
+            noteCount: 0,
+            expectedPaths: [],
+            changedCount: -1,
+            errorMessage: "Bear SQLite schema is missing required note columns."
+        )
+    }
+
+    let allFileMaps = buildNoteFileMap(conn: conn)
+    var noteCount = 0
+    var changedCount = 0
+    var expectedPaths = Set<URL>()
+    var reservedTargets = Set<URL>()
+    var syncBindings: [B2OUSyncBinding] = []
+    var conflictPaths = Set<URL>()
+    let stateBindings = syncBindingsByPath(exportPath: config.exportPath)
+    let isoFormatter = ISO8601DateFormatter()
+
+    func targetFor(basePath: URL, asTextbundle: Bool) -> URL {
+        let suffix = asTextbundle ? ".textbundle" : ".md"
+        return URL(fileURLWithPath: basePath.path + suffix)
+    }
+
+    func uniqueBasePath(basePath: URL, asTextbundle: Bool, noteUUID: String) -> URL {
+        let target = targetFor(basePath: basePath, asTextbundle: asTextbundle)
+        if !reservedTargets.contains(target) {
+            reservedTargets.insert(target)
+            return basePath
+        }
+
+        let tagged = basePath.deletingLastPathComponent()
+            .appendingPathComponent("\(basePath.lastPathComponent) - \(String(noteUUID.prefix(8)))")
+        let taggedTarget = targetFor(basePath: tagged, asTextbundle: asTextbundle)
+        if !reservedTargets.contains(taggedTarget) {
+            reservedTargets.insert(taggedTarget)
+            return tagged
+        }
+
+        var count = 2
+        while true {
+            let candidate = basePath.deletingLastPathComponent()
+                .appendingPathComponent("\(tagged.lastPathComponent) - \(String(format: "%02d", count))")
+            let candidateTarget = targetFor(basePath: candidate, asTextbundle: asTextbundle)
+            if !reservedTargets.contains(candidateTarget) {
+                reservedTargets.insert(candidateTarget)
+                return candidate
+            }
+            count += 1
+        }
+    }
+
+    let fm = FileManager.default
+    try? fm.createDirectory(at: config.exportPath, withIntermediateDirectories: true)
+
+    forEachNote(conn: conn) { note in
+        if !config.onlyNoteUUIDs.isEmpty && !config.onlyNoteUUIDs.contains(note.uuid) { return }
+        if isUntitledPlaceholder(note) { return }
 
         let filename = generateFilename(note: note, naming: config.naming)
         let modUnix = coreDataToUnix(note.modifiedDate)
@@ -558,12 +1251,12 @@ public func exportNotes(config: ExportConfig) -> ExportResult {
                         nt.lowercased().hasPrefix(et.lowercased())
                     }
                 }
-                if isExcluded { continue }
+                if isExcluded { return }
             }
             fileList = [config.exportPath.appendingPathComponent(filename).path]
         }
 
-        if fileList.isEmpty { continue }
+        if fileList.isEmpty { return }
         noteCount += 1
 
         var seenPaths = Set<String>()
@@ -576,13 +1269,31 @@ public func exportNotes(config: ExportConfig) -> ExportResult {
             filepath = uniqueBasePath(basePath: filepath, asTextbundle: asTextbundle, noteUUID: note.uuid)
             let target = targetFor(basePath: filepath, asTextbundle: asTextbundle)
 
-            // Incremental skip
-            if fm.fileExists(atPath: target.path),
-               let attrs = try? fm.attributesOfItem(atPath: target.path),
-               let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970,
-               mtime >= modUnix {
+            // Incremental skip, guarded by the last exported file fingerprint.
+            switch existingTargetDecision(
+                target: target,
+                exportPath: config.exportPath,
+                sourceModifiedUnix: modUnix,
+                stateBindings: stateBindings
+            ) {
+            case .skip(let fingerprint):
                 expectedPaths.insert(target)
+                syncBindings.append(makeExportSyncBindingWithFingerprint(
+                    exportPath: config.exportPath,
+                    target: target,
+                    bearID: note.uuid,
+                    bearHash: "",
+                    bearModified: isoFormatter.string(from: Date(timeIntervalSince1970: modUnix)),
+                    bearTitle: note.title,
+                    fingerprint: fingerprint
+                ))
                 continue
+            case .conflict:
+                expectedPaths.insert(target)
+                conflictPaths.insert(target)
+                continue
+            case .write:
+                break
             }
 
             // Markdown processing
@@ -608,6 +1319,14 @@ public func exportNotes(config: ExportConfig) -> ExportResult {
                     fileMap: noteFileMap
                 )
                 expectedPaths.insert(target)
+                syncBindings.append(makeExportSyncBinding(
+                    exportPath: config.exportPath,
+                    target: target,
+                    bearID: note.uuid,
+                    bearHash: "",
+                    bearModified: isoFormatter.string(from: Date(timeIntervalSince1970: modUnix)),
+                    bearTitle: note.title
+                ))
             } else if config.exportImageRepository, let assetsPath = config.assetsPath {
                 let processed = processExportImages(
                     text: processedText, filepath: filepath, conn: conn, notePK: note.pk,
@@ -618,15 +1337,43 @@ public func exportNotes(config: ExportConfig) -> ExportResult {
                 writeNoteFile(filepath: target, content: frontMatter + processed,
                               modifiedUnix: modUnix, createdCoreData: note.creationDate)
                 expectedPaths.insert(target)
+                syncBindings.append(makeExportSyncBinding(
+                    exportPath: config.exportPath,
+                    target: target,
+                    bearID: note.uuid,
+                    bearHash: "",
+                    bearModified: isoFormatter.string(from: Date(timeIntervalSince1970: modUnix)),
+                    bearTitle: note.title
+                ))
             } else {
                 writeNoteFile(filepath: target, content: frontMatter + processedText,
                               modifiedUnix: modUnix, createdCoreData: note.creationDate)
                 expectedPaths.insert(target)
+                syncBindings.append(makeExportSyncBinding(
+                    exportPath: config.exportPath,
+                    target: target,
+                    bearID: note.uuid,
+                    bearHash: "",
+                    bearModified: isoFormatter.string(from: Date(timeIntervalSince1970: modUnix)),
+                    bearTitle: note.title
+                ))
             }
         }
     }
 
-    return ExportResult(noteCount: noteCount, expectedPaths: expectedPaths, changedCount: changedCount)
+    if conflictPaths.isEmpty {
+        writeExportSyncState(
+            exportPath: config.exportPath,
+            bindings: syncBindings,
+            merge: !config.onlyNoteUUIDs.isEmpty
+        )
+    }
+    return ExportResult(
+        noteCount: noteCount,
+        expectedPaths: expectedPaths,
+        changedCount: changedCount,
+        conflictPaths: conflictPaths
+    )
 }
 
 private func shouldUseTextbundle(text: String, filepath: URL, config: ExportConfig) -> Bool {
@@ -639,8 +1386,10 @@ private func shouldUseTextbundle(text: String, filepath: URL, config: ExportConf
 // MARK: - Helpers
 
 private func relativePathString(from base: URL, to target: URL) -> String {
-    guard target.path.hasPrefix(base.path) else { return "" }
-    var rel = String(target.path.dropFirst(base.path.count))
+    let basePath = base.standardizedFileURL.path
+    let targetPath = target.standardizedFileURL.path
+    guard targetPath.hasPrefix(basePath + "/") else { return "" }
+    var rel = String(targetPath.dropFirst(basePath.count))
     if rel.hasPrefix("/") { rel = String(rel.dropFirst()) }
     return rel
 }
